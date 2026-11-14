@@ -1,4 +1,4 @@
-"""Game-independent EEG features shared by calibration and the LSL bridge.
+"""Game-independent EEG features shared by calibration and the g.Pype classifier node.
 
 Input is always samples x channels, in microvolts. These are experimental
 control features, not clinical measures or probabilities of mental states.

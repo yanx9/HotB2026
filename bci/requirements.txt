@@ -1,2 +1,4 @@
 numpy
 scipy
+# Potok g.Pype, okna (PySide6) i sterownik Unicorna. Python 3.10 lub nowszy.
+gpype[gui,devices]>=4.2,<5

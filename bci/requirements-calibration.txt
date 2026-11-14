@@ -1,4 +1,0 @@
--r requirements.txt
-# Qt 6.8 supports older macOS releases as well as Windows / Linux.
-PySide6-Essentials>=6.8,<6.9
-PySide6-Addons>=6.8,<6.9

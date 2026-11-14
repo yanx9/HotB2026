@@ -77,7 +77,7 @@ namespace Precel.Game
                 builder.AppendLine(binding.live ? binding.value.ToString("+0.00;-0.00") : "brak sygnału");
             }
             bool bridge = Time.unscaledTime - UdpSignalSource.LastPacketAt < 2f;
-            builder.Append(bridge ? "most LSL: " + UdpSignalSource.LastSender : "most LSL: brak danych");
+            builder.Append(bridge ? "potok BCI: " + UdpSignalSource.LastSender : "potok BCI: brak danych");
             signals.text = builder.ToString();
         }
     }

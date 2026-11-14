@@ -2,7 +2,7 @@
   "name": "com.hotb.bci-signals",
   "version": "0.1.0",
   "displayName": "BCI Signals",
-  "description": "Warstwa sygnałów wspólna dla gier: nazwane sygnały z mostu LSL (UDP) albo klawiatury, powiązania sygnał -> czynność, znaczniki zdarzeń.",
+  "description": "Warstwa sygnałów wspólna dla gier: nazwane sygnały z potoku g.Pype (UDP JSON) albo klawiatury, powiązania sygnał -> czynność, znaczniki zdarzeń.",
   "unity": "6000.0",
   "dependencies": {
     "com.unity.inputsystem": "1.20.1"

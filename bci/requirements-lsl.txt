@@ -1,3 +1,0 @@
-# Optional legacy input / LabRecorder marker output. Not needed for g.Pype UDP.
--r requirements.txt
-pylsl

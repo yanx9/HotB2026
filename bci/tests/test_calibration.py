@@ -6,7 +6,6 @@
 import copy
 import json
 from pathlib import Path
-import socket
 import sys
 import tempfile
 import unittest
@@ -17,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from calibration_session import CalibrationSession, DemoSource, Protocol
 from processing import FeatureConfig, SIGNALS, Window, extract_feature
-from profiles import Detector, ProfileEngine, fit_calibration, load_profile, new_profile, save_profile
+from profiles import (Detector, ProfileEngine, assert_profile_source, fit_calibration, load_profile,
+                      new_profile, save_profile)
 
 
 def record_simulated(name, no_effect=False):
@@ -178,57 +178,32 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(detector.value, 0)
 
 
-class LSLMappingTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        try:
-            import pylsl
-        except (ImportError, RuntimeError) as exc:
-            raise unittest.SkipTest(f"Optional pylsl / liblsl required: {exc}")
+class ProfileSourceTests(unittest.TestCase):
+    STREAM = {"name": "test", "transport": "gpype", "source_id": "fake-gpype",
+              "filters": {"highpass_hz": 1.0, "notch_hz": [48, 52]}}
 
-    def make_info(self, labels=None, unit="microvolts", count=8):
-        from pylsl import StreamInfo
-        from processing import UNICORN_LABELS
-        info = StreamInfo("test", "EEG", count, 250, "float32", "fake-test")
-        node = info.desc().append_child("channels")
-        for label in labels or UNICORN_LABELS:
-            channel = node.append_child("channel")
-            channel.append_child_value("label", label)
-            channel.append_child_value("unit", unit)
-        return info
-
-    def test_metadata_maps_reordered_channels_and_units(self):
-        from lsl_source import build_config
-        config = build_config(self.make_info(["C4", "C3", "Cz", "Fz", "Pz", "PO7", "Oz", "PO8"], "V"))
-        self.assertEqual(config.c4, 0)
-        self.assertEqual(config.c3, 1)
-        self.assertEqual(config.input_scale_uv, 1e6)
-
-    def test_unknown_labels_and_units_require_explicit_confirmation(self):
-        from lsl_source import build_config
-        info = self.make_info([f"x{i}" for i in range(8)], "")
+    def test_synthetic_profile_cannot_be_used_on_real_source(self):
+        p = new_profile("demo", FeatureConfig(), self.STREAM, True)
         with self.assertRaises(ValueError):
-            build_config(info)
-        config = build_config(info, units="uv", assume_unicorn_order=True)
-        self.assertEqual(config.eeg_channels, list(range(8)))
-
-    def test_auxiliary_channels_never_enter_features(self):
-        from lsl_source import build_config
-        from processing import UNICORN_LABELS
-        config = build_config(self.make_info(list(UNICORN_LABELS) + [f"aux{i}" for i in range(9)], count=17))
-        self.assertEqual(config.eeg_channels, list(range(8)))
-        self.assertEqual(config.channel_count, 17)
-
-    def test_demo_profile_cannot_be_used_on_real_source(self):
-        from lsl_source import assert_profile_source
-        source = DemoSource()
-        p = new_profile("demo", source.config, source.stream, True)
+            assert_profile_source(p, self.STREAM, True)
+        assert_profile_source(p, self.STREAM, True, allow_simulated=True)
         with self.assertRaises(ValueError):
-            assert_profile_source(p, source)
-        assert_profile_source(p, source, allow_simulated=True)
-        source.simulated = False
+            assert_profile_source(p, self.STREAM, False, allow_simulated=True)
+
+    def test_real_profile_requires_same_pipeline(self):
+        p = new_profile("person", FeatureConfig(), self.STREAM, False)
+        assert_profile_source(p, self.STREAM, False, FeatureConfig())
         with self.assertRaises(ValueError):
-            assert_profile_source(p, source, allow_simulated=True)
+            assert_profile_source(p, self.STREAM, True, allow_simulated=True)
+        with self.assertRaises(ValueError):   # inny filtr sieciowy
+            assert_profile_source(p, {**self.STREAM, "filters": {"highpass_hz": 1.0, "notch_hz": [58, 62]}}, False)
+        with self.assertRaises(ValueError):   # inne ustawienia cech
+            assert_profile_source(p, self.STREAM, False, FeatureConfig(artifact_uv=500))
+        for transport in ("lsl", "gpype_udp"):   # profile sprzed potoku g.Pype
+            old = copy.deepcopy(p)
+            old["stream"]["transport"] = transport
+            with self.assertRaises(ValueError):
+                assert_profile_source(old, self.STREAM, False)
 
 
 if __name__ == "__main__":

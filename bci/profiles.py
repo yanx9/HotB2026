@@ -204,20 +204,17 @@ class ProfileEngine:
             right["active"] = left["active"] = False
         return results
 
-def assert_profile_source(profile, source, allow_simulated=False):
-    config = validate_profile(profile)
-    if profile["simulated"] and not (allow_simulated and source.simulated):
-        raise ValueError("Profil demonstracyjny można uruchamiać tylko z syntetycznym źródłem i --allow-simulated.")
-    if source.simulated and not profile["simulated"]:
-        raise ValueError("Profil rzeczywisty nie pasuje do źródła demonstracyjnego.")
-    if config.to_dict() != source.config.to_dict():
-        raise ValueError("Montaż, jednostki, próbkowanie lub ustawienia cech różnią się od profilu. "
-                         "Użyj tych samych ustawień eksportera / wykonaj ponowną kalibrację.")
-    saved_transport = profile["stream"].get("transport", "lsl")
-    live_transport = source.stream.get("transport", "lsl")
-    if not profile["simulated"] and saved_transport != live_transport:
-        raise ValueError("Profil pochodzi z innego transportu. Wykonaj kalibrację na docelowym wejściu.")
-    if saved_transport == live_transport == "gpype_udp":
-        for key in ("frame_samples", "byte_order"):
-            if profile["stream"]["input"][key] != source.stream["input"][key]:
-                raise ValueError(f"Ustawienie UDP {key} różni się od profilu.")
+def assert_profile_source(profile, stream, simulated, config=None, allow_simulated=False):
+    """Profil pasuje tylko do toru, na którym powstał: to samo źródło, filtry i ustawienia cech."""
+    saved = validate_profile(profile)
+    if profile["simulated"] and not (allow_simulated and simulated):
+        raise ValueError("Profil syntetyczny można uruchamiać tylko ze źródłem syntetycznym (--fake --allow-simulated).")
+    if simulated and not profile["simulated"]:
+        raise ValueError("Profil rzeczywisty nie pasuje do źródła syntetycznego.")
+    if config is not None and saved.to_dict() != config.to_dict():
+        raise ValueError("Ustawienia cech (próg artefaktów, pasmo szczęki) różnią się od profilu. "
+                         "Użyj tych samych ustawień albo wykonaj ponowną kalibrację.")
+    if profile["stream"].get("transport") != stream["transport"]:
+        raise ValueError("Profil pochodzi z innego toru (LSL albo surowe UDP). Wykonaj kalibrację przez g.Pype.")
+    if profile["stream"].get("filters") != stream["filters"]:
+        raise ValueError("Filtry potoku różnią się od zapisanych w profilu. Wykonaj ponowną kalibrację.")

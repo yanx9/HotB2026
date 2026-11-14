@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Bci.Signals
 {
-    // Odbiera sygnały z mostu LSL (bci/lsl_bridge.py) przez UDP i wpisuje je do SignalHub.
+    // Odbiera sygnały z potoku g.Pype (bci/bci_pipeline.py) przez UDP i wpisuje je do SignalHub.
     // Jeden datagram = {"type","name","value","t"}; format: docs/protocol.md.
     // "metric" to wartość ciągła, "command" to zdarzenie jednorazowe.
     public class UdpSignalSource : MonoBehaviour
@@ -40,7 +40,7 @@ namespace Bci.Signals
             }
             catch (SocketException e)
             {
-                Debug.LogWarning($"Port UDP {port} jest zajęty ({e.SocketErrorCode}). Sygnały z mostu nie dotrą; działa klawiatura.");
+                Debug.LogWarning($"Port UDP {port} jest zajęty ({e.SocketErrorCode}). Sygnały z potoku BCI nie dotrą; działa klawiatura.");
                 return;
             }
             running = true;

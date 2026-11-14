@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Bci.Signals
 {
-    // Znaczniki zdarzeń gry wysyłane do mostu (UDP), który publikuje je w LSL obok EEG.
+    // Znaczniki zdarzeń gry wysyłane do potoku BCI (UDP), który zapisuje je do pliku.
     // Trafiają na adres, z którego przychodzą sygnały; dopóki nic nie przyszło, na localhost.
     public static class MarkerSender
     {

@@ -16,7 +16,7 @@ namespace Bci.Signals
     }
 
     // Tablica wszystkich sygnałów, jakie dotarły do gry. Gra nie wie, co one znaczą
-    // ani skąd pochodzą (most LSL, klawiatura, cokolwiek): zna tylko nazwy i liczby.
+    // ani skąd pochodzą (potok g.Pype, klawiatura, cokolwiek): zna tylko nazwy i liczby.
     // Powiązanie sygnału z czynnością w grze robi SignalBindings.
     public static class SignalHub
     {

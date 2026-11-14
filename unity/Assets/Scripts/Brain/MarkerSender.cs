@@ -13,7 +13,7 @@ namespace Ogrod.Brain
     {
         public const int Port = 5006;
         // adres ustawia UdpBrainReceiver: znaczniki wracają tam, skąd przychodzi sygnał BCI,
-        // więc most może działać na innym komputerze
+        // więc potok BCI może działać na innym komputerze
         public static volatile string Host = "127.0.0.1";
         static UdpClient client;
         static StreamWriter log;

@@ -3,8 +3,8 @@ using UnityEngine.InputSystem;
 
 namespace Bci.Signals
 {
-    // Zastępuje sygnały z mostu klawiaturą: publikuje w SignalHub te same nazwy sygnałów,
-    // których słuchają powiązania. Dopóki klawisz jest wciśnięty, nadpisuje sygnał z mostu.
+    // Zastępuje sygnały z potoku BCI klawiaturą: publikuje w SignalHub te same nazwy sygnałów,
+    // których słuchają powiązania. Dopóki klawisz jest wciśnięty, nadpisuje sygnał z potoku.
     public class KeyboardSignalSource : MonoBehaviour
     {
         public SignalBindings bindings;
@@ -38,7 +38,7 @@ namespace Bci.Signals
                 // odwracamy przeliczenie z powiązania, żeby pełne wciśnięcie dało w grze pełne wychylenie
                 float raw = active ? binding.center + (binding.invert ? -value : value) / Mathf.Max(1e-4f, binding.gain) : binding.center;
                 SignalHub.Publish(binding.signal, raw, "klawiatura");
-                SignalHub.Publish(SignalBindings.ValidName(binding.signal), 1f, "klawiatura");   // klawisz przebija "nieważny" z mostu
+                SignalHub.Publish(SignalBindings.ValidName(binding.signal), 1f, "klawiatura");   // klawisz przebija "nieważny" z potoku
             }
         }
     }

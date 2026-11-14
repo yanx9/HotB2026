@@ -1,4 +1,4 @@
-"""Acquisition-clock trial state machine; no GUI, LSL or game dependencies."""
+"""Trial state machine on the sample clock; no GUI, g.Pype or game dependencies."""
 
 from dataclasses import asdict, dataclass
 
@@ -82,8 +82,7 @@ class CalibrationSession:
     def ingest(self, samples, timestamps):
         if self.phase not in ("rest", "active") or self.completed or self.cancelled:
             return
-        # Use the source's common monotonic grid: corrected acquisition time for
-        # LSL, receiver-estimated time for raw g.Pype UDP (no clock on the wire).
+        # Timestamps are the source's uniform sample grid on the host monotonic clock.
         for sample, timestamp in zip(samples, timestamps):
             if not self.phase_started + self.protocol.settle_s <= timestamp <= self.phase_end:
                 continue

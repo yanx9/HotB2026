@@ -11,7 +11,7 @@ namespace Bci.Signals
     {
         public string action;          // nazwa czynności w grze, np. "steer"
         public string signal;          // nazwa sygnału w SignalHub, np. "laterality"
-        public string fallback;        // sygnał zastępczy, gdy pierwszy nie dociera (np. most bez profilu kalibracji)
+        public string fallback;        // sygnał zastępczy, gdy pierwszy nie dociera (np. potok bez profilu kalibracji)
         public float center;           // wartość sygnału uznawana za zero
         public float gain = 1f;
         public float deadzone;         // martwa strefa po przeliczeniu
@@ -73,12 +73,12 @@ namespace Bci.Signals
         // true przez jedną klatkę, gdy sygnał przekroczył próg
         public bool Pressed(string action) => Get(action)?.pressed ?? false;
 
-        // Nazwa flagi ważności, którą most z profilem kalibracji nadaje obok sygnału:
+        // Nazwa flagi ważności, którą potok BCI nadaje obok sygnału:
         // "jaw" i "jaw_active" mają wspólną flagę "jaw_valid".
         public static string ValidName(string signal) =>
             (signal.EndsWith("_active") ? signal.Substring(0, signal.Length - "_active".Length) : signal) + "_valid";
 
-        // Sygnał liczy się, gdy jest świeży i most nie oznaczył go jako nieważny
+        // Sygnał liczy się, gdy jest świeży i potok nie oznaczył go jako nieważny
         // (brak kalibracji, artefakt, przerwa w danych). Bez flagi ważności wystarczy świeżość.
         static bool Read(string signal, out float value)
         {

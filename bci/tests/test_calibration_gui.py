@@ -1,9 +1,7 @@
-"""Qt smoke + controller tests; skipped when optional Qt dependencies are absent."""
+"""Qt smoke + controller tests; skipped when Qt (gpype[gui]) is not installed."""
 
 import os
 from pathlib import Path
-import select
-import socket
 import sys
 import tempfile
 import time
@@ -23,19 +21,54 @@ except (ImportError, SystemExit):
 
 from processing import SIGNALS
 from profiles import load_profile
-from calibration_markers import marker_code
 from calibration_session import DemoSource
 import numpy as np
 
 
-@unittest.skipUnless(QT_AVAILABLE, "Optional compatible Qt installation required")
+class VirtualSource:
+    """Stands in for gpype_nodes.PipelineSource: same interface, samples on the test's clock."""
+
+    clock = None
+
+    def __init__(self, fake=False, serial=None, mains_hz=50, artifact_uv=200, jaw_band=(55, 95)):
+        from processing import FeatureConfig
+        self.config = FeatureConfig(artifact_uv=artifact_uv, jaw_band=list(jaw_band)).validate()
+        self.stream = {"name": "virtual", "transport": "gpype", "source_id": "fake-gpype",
+                       "filters": {"highpass_hz": 1.0, "notch_hz": [mains_hz - 2, mains_hz + 2]}}
+        self.simulated, self.gap, self.stalled = True, False, False
+        self.demo, self.state, self.sent, self.last = DemoSource(), "rest", self.clock(), None
+
+    def set_state(self, state):
+        self.state = state
+
+    def read(self):
+        if self.stalled:
+            return np.empty((0, 8)), np.array([])
+        now = self.clock()
+        count = int(round((now - self.sent) * 250))
+        stamps = self.sent + (1 + np.arange(count)) / 250
+        self.sent += count / 250
+        self.last = now
+        return self.demo.samples(stamps, self.state), stamps
+
+    def fresh(self):
+        return self.last is not None and self.clock() - self.last < .5
+
+    def diagnostics(self):
+        return {"frames": 0, "timing_resets": 0}
+
+    def close(self):
+        pass
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt required: pip install -r bci/requirements.txt")
 class CalibrationGuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def wait_until(self, predicate):
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             self.app.processEvents()
             if predicate():
@@ -46,15 +79,13 @@ class CalibrationGuiTests(unittest.TestCase):
 
     def test_four_separate_views_connect_and_cancel_without_saving(self):
         with tempfile.TemporaryDirectory() as tmp:
-            args = parser().parse_args(["--demo", "--profile", str(Path(tmp) / "demo.json")])
+            args = parser().parse_args(["--fake", "--profile", str(Path(tmp) / "fake.json")])
             window = CalibrationApp(args)
             window.show()
             try:
                 self.assertEqual(window.stack.count(), 4)
-                self.assertEqual(window.source_kind.currentData(), "gpype")
-                self.assertFalse(window.udp_panel.isHidden())
-                self.assertTrue(window.scan_button.isHidden())
-                self.assertEqual(window.units.currentData(), "uv")
+                self.assertTrue(window.fake.isChecked())
+                self.assertEqual(window.mains.currentData(), 50)
                 for i, button in enumerate(window.nav_buttons):
                     button.click()
                     self.assertEqual(window.stack.currentIndex(), i)
@@ -63,6 +94,8 @@ class CalibrationGuiTests(unittest.TestCase):
                 self.wait_until(lambda: window.connected_flag)
                 self.assertTrue(window.connected_flag, window.status.text())
                 self.assertFalse(window.views["eyes_closed"].start_button.isEnabled())
+                # the real g.Pype pipeline with the synthetic source must deliver samples
+                self.wait_until(lambda: "dane aktualne" in window.status.text())
                 window.audio_confirm.setChecked(True)
                 self.assertTrue(window.views["eyes_closed"].start_button.isEnabled())
                 window.views["eyes_closed"].start_button.click()
@@ -79,79 +112,33 @@ class CalibrationGuiTests(unittest.TestCase):
                 QTest.qWait(50)
 
     def test_worker_saves_four_results_and_reopens_profile(self):
+        """Controller, session, fitting and profile writes on a virtual clock (a real run takes minutes)."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile.json"
             worker = Worker()
-            errors, results = [], []
+            errors = []
             worker.error.connect(errors.append)
-            worker.result.connect(lambda name, model: results.append((name, model)))
-            options = {"demo": True, "name": "", "subject": "test", "path": str(path),
-                       "units": "auto", "assume_order": False, "artifact_uv": 200, "jaw_band": [55, 95]}
-            clock = [0.0]
-            with patch("calibrate.local_clock", side_effect=lambda: clock[0]):
-                try:
-                    worker.connect_source(options)
-                    for name in SIGNALS:
-                        worker.start_calibration(name, 6)
-                        for _ in range(10000):
-                            clock[0] += 0.04
-                            worker.tick()
-                            if not worker.recording:
-                                break
-                        self.assertFalse(worker.recording)
-                        self.assertEqual(errors, [])
-                        self.assertTrue(path.exists())
-                        self.assertEqual(load_profile(path)["calibrations"][name]["status"], "ready")
-                    self.assertEqual(set(load_profile(path)["calibrations"]), set(SIGNALS))
-                    worker.disconnect_source()
-                    worker.connect_source(options)
-                    self.assertEqual(set(worker.engine.detectors), set(SIGNALS))
-                    self.assertEqual(errors, [])
-                finally:
-                    worker.disconnect_source()
-
-    def test_standard_udp_calibrates_four_views_and_emits_numeric_triggers(self):
-        """Real sockets / wire / controller / fitting; virtual time avoids a 6-minute test."""
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "udp.json"
-            sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            triggers = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            triggers.bind(("127.0.0.1", 0))
-            triggers.setblocking(False)
-            worker = Worker()
-            errors, codes = [], set()
-            worker.error.connect(errors.append)
+            options = {"fake": True, "serial": "", "mains_hz": 50, "subject": "test", "path": str(path),
+                       "artifact_uv": 200, "jaw_band": [55, 95]}
             clock = [100.0]
-            samples = DemoSource()
-            options = {"demo": False, "source": "gpype", "subject": "udp-test", "path": str(path),
-                       "units": "uv", "artifact_uv": 200, "jaw_band": [55, 95],
-                       "udp": {"port": 0, "clock": lambda: clock[0]}, "synthetic_input": True,
-                       "trigger_port": triggers.getsockname()[1]}
+            VirtualSource.clock = staticmethod(lambda: clock[0])
 
             def tick():
-                clock[0] += .016
-                state = worker.session.name if worker.recording and worker.session.phase == "active" else "rest"
-                frame = samples.samples(clock[0] - np.arange(3, -1, -1) / 250, state)
-                sender.sendto(frame.astype("<f8").tobytes(), worker.source.sock.getsockname())
-                self.assertTrue(select.select([worker.source.sock], [], [], 1)[0])
+                clock[0] += 0.04
                 worker.tick()
-                if worker.session and worker.session.completed:
-                    select.select([triggers], [], [], .1)
-                while True:
-                    try:
-                        codes.add(int(triggers.recvfrom(128)[0].decode("ascii")))
-                    except BlockingIOError:
-                        break
 
-            with patch("calibrate.local_clock", side_effect=lambda: clock[0]):
+            with patch("calibrate.local_clock", side_effect=lambda: clock[0]), \
+                    patch("gpype_nodes.PipelineSource", VirtualSource):
                 try:
                     worker.connect_source(options)
                     self.assertEqual(errors, [])
-                    self.assertFalse(worker.source.fresh())
+                    worker.start_calibration("jaw", 6)
+                    self.assertFalse(worker.recording)   # no samples yet: refuse to start
+                    self.assertIn("Brak świeżych próbek", errors.pop())
                     tick()
                     for name in SIGNALS:
                         worker.start_calibration(name, 6)
-                        self.assertTrue(worker.recording, (name, errors, worker.source.diagnostics()))
+                        self.assertTrue(worker.recording, errors)
                         for _ in range(10000):
                             tick()
                             if not worker.recording:
@@ -159,14 +146,20 @@ class CalibrationGuiTests(unittest.TestCase):
                         self.assertFalse(worker.recording)
                         self.assertEqual(errors, [])
                         self.assertEqual(load_profile(path)["calibrations"][name]["status"], "ready")
-                        self.assertTrue({marker_code(name, phase) for phase in ("prepare", "rest", "active", "complete")} <= codes)
                     profile = load_profile(path)
                     self.assertEqual(set(profile["calibrations"]), set(SIGNALS))
-                    self.assertEqual(profile["stream"]["transport"], "gpype_udp")
+                    self.assertEqual(profile["stream"]["transport"], "gpype")
                     self.assertTrue(profile["simulated"])
+                    worker.disconnect_source()
+                    worker.connect_source(options)
+                    self.assertEqual(set(worker.engine.detectors), set(SIGNALS))
+                    self.assertEqual(errors, [])
                     # A broken stream cancels a new run without altering the saved results.
+                    tick()
                     before = path.read_bytes()
                     worker.start_calibration("jaw", 6)
+                    self.assertTrue(worker.recording)
+                    worker.source.stalled = True
                     clock[0] += 2.1
                     worker.tick()
                     self.assertFalse(worker.recording)
@@ -174,8 +167,6 @@ class CalibrationGuiTests(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), before)
                 finally:
                     worker.disconnect_source()
-                    sender.close()
-                    triggers.close()
 
 
 if __name__ == "__main__":
