@@ -80,7 +80,8 @@ class LSLSource:
             full = self.inlet.info(timeout=5)
             self.config = build_config(full, units, assume_unicorn_order, artifact_uv, jaw_band)
             self.stream = {"name": full.name(), "source_id": full.source_id(), "hostname": full.hostname(),
-                           "units_option": units, "assumed_unicorn_order": assume_unicorn_order}
+                           "units_option": units, "assumed_unicorn_order": assume_unicorn_order,
+                           "transport": "lsl", "timing": "lsl_corrected_to_monotonic"}
             self.inlet.open_stream(timeout=5)
         except Exception:
             self.inlet.close_stream()
@@ -96,6 +97,8 @@ class LSLSource:
         if not stamps:
             return np.empty((0, self.config.channel_count)), np.array([])
         x, t = np.asarray(samples, dtype=float), np.asarray(stamps, dtype=float)
+        # The calibration controller uses the host monotonic clock, independently of transport.
+        t += time.monotonic() - local_clock()
         if x.shape != (len(t), self.config.channel_count) or not np.isfinite(t).all():
             raise ValueError("Niepoprawny kształt lub znaczniki czasu LSL.")
         # No windows may span a lost chunk. If there is an internal gap retain only its suffix.
@@ -115,19 +118,11 @@ class LSLSource:
 
     def fresh(self):
         return (self.last_received is not None and time.monotonic() - self.last_received < 0.5
-                and self.last_timestamp is not None and -0.1 <= local_clock() - self.last_timestamp < 0.5)
+                and self.last_timestamp is not None and -0.1 <= time.monotonic() - self.last_timestamp < 0.5)
 
     def close(self):
         self.inlet.close_stream()
 
 
-def assert_profile_source(profile, source, allow_simulated=False):
-    from profiles import validate_profile
-    config = validate_profile(profile)
-    if profile["simulated"] and not (allow_simulated and source.simulated):
-        raise ValueError("Profil demonstracyjny można uruchamiać tylko z syntetycznym źródłem i --allow-simulated.")
-    if source.simulated and not profile["simulated"]:
-        raise ValueError("Profil rzeczywisty nie pasuje do źródła demonstracyjnego.")
-    if config.to_dict() != source.config.to_dict():
-        raise ValueError("Montaż, jednostki, próbkowanie lub ustawienia cech różnią się od profilu. "
-                         "Użyj tych samych ustawień eksportera / wykonaj ponowną kalibrację.")
+# Backwards-compatible import for existing integrations.
+from profiles import assert_profile_source

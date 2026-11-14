@@ -179,6 +179,13 @@ class CalibrationTests(unittest.TestCase):
 
 
 class LSLMappingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import pylsl
+        except (ImportError, RuntimeError) as exc:
+            raise unittest.SkipTest(f"Optional pylsl / liblsl required: {exc}")
+
     def make_info(self, labels=None, unit="microvolts", count=8):
         from pylsl import StreamInfo
         from processing import UNICORN_LABELS

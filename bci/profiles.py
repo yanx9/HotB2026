@@ -203,3 +203,21 @@ class ProfileEngine:
         if right["active"] and left["active"]:
             right["active"] = left["active"] = False
         return results
+
+def assert_profile_source(profile, source, allow_simulated=False):
+    config = validate_profile(profile)
+    if profile["simulated"] and not (allow_simulated and source.simulated):
+        raise ValueError("Profil demonstracyjny można uruchamiać tylko z syntetycznym źródłem i --allow-simulated.")
+    if source.simulated and not profile["simulated"]:
+        raise ValueError("Profil rzeczywisty nie pasuje do źródła demonstracyjnego.")
+    if config.to_dict() != source.config.to_dict():
+        raise ValueError("Montaż, jednostki, próbkowanie lub ustawienia cech różnią się od profilu. "
+                         "Użyj tych samych ustawień eksportera / wykonaj ponowną kalibrację.")
+    saved_transport = profile["stream"].get("transport", "lsl")
+    live_transport = source.stream.get("transport", "lsl")
+    if not profile["simulated"] and saved_transport != live_transport:
+        raise ValueError("Profil pochodzi z innego transportu. Wykonaj kalibrację na docelowym wejściu.")
+    if saved_transport == live_transport == "gpype_udp":
+        for key in ("frame_samples", "byte_order"):
+            if profile["stream"]["input"][key] != source.stream["input"][key]:
+                raise ValueError(f"Ustawienie UDP {key} różni się od profilu.")

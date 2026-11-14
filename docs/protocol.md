@@ -3,12 +3,16 @@
 Kontrakt między częścią pythonową (`bci/`) a dowolną grą Unity (`unity/`, `precel/` i kolejnymi). Zmieniając format, zmieniajcie ten plik w tym samym commicie co kod po obu stronach. Kalibracja i profile: [calibration.md](calibration.md).
 
 ```
-Unicorn Hybrid Black ──Bluetooth──▶ Unicorn Suite ──LSL──▶ bci/lsl_bridge.py ──UDP, JSON──▶ Unity
-                                                                 ▲                          │
-                                        LabRecorder ◀──LSL───────┴──────UDP (znaczniki)─────┘
+Unicorn Hybrid Black → g.Pype HybridBlack → UDPSender → UDP 56000 (float64)
+                                                          │
+                        calibrate.py → profil JSON         │
+                                           │              ▼
+                                           └──────→ bci_bridge.py → UDP 5005 (JSON) → Unity
+                                                          ▲                           │
+                             data/raw/*.jsonl ← znacznik ─┴──── UDP 5006 (JSON) ──────┘
 ```
 
-Most (`bci/lsl_bridge.py`) może działać na innym komputerze niż gra, np. na laptopie z Windowsem, do którego podłączony jest Unicorn. LSL znajduje strumienie w sieci lokalnej sam; jeśli sieć blokuje multicast, adres komputera ze strumieniem trzeba podać w konfiguracji LSL (`KnownPeers`).
+Kalibrator odbiera bezpośrednio ten sam strumień EEG co most; na danym porcie działa jeden z nich. Po kalibracji należy go rozłączyć, a następnie uruchomić most z profilem. Most może działać na innym komputerze niż Unity (`--host IP_GRY`). Kalibracja, przetwarzanie i profile pozostają niezależne od gry.
 
 ## 1. Wejście: Unicorn → `bci/`
 
@@ -16,9 +20,16 @@ Most (`bci/lsl_bridge.py`) może działać na innym komputerze niż gra, np. na 
 |---|---|
 | Kanały EEG | 8 — domyślny montaż: Fz, C3, Cz, C4, Pz, PO7, Oz, PO8 |
 | Próbkowanie | 250 Hz |
-| Transport | LSL, odbiera `bci/lsl_bridge.py` |
-| Nazwa i typ strumienia LSL | TODO: sprawdzić po podłączeniu (`python bci/lsl_bridge.py --list`). Most domyślnie bierze pierwszy strumień typu `EEG`, inny wskazuje `--name` |
-| Liczba i kolejność kanałów w strumieniu | TODO: sprawdzić — oprócz EEG mogą być akcelerometr, żyroskop, bateria, licznik próbek. Most liczy `focus` z kanałów 0–4 (Fz, C3, Cz, C4, Pz), inne wskazuje `--channels` |
+| Transport | standardowy `gp.UDPSender`, domyślnie `127.0.0.1:56000` |
+| Dane | surowe EEG, `float64`, little-endian, układ `(próbki, kanały)` w kolejności C, jednostki EEG µV |
+| Ramka | domyślnie 4 próbki × 8 kanałów × 8 bajtów = 256 bajtów; inna ramka wymaga zgodnego `--frame-samples` |
+| Metadane | brak na łączu; kanały, ramka, próbkowanie, jednostki i kolejność bajtów są ustawiane w kalibratorze i zapisywane w profilu |
+| Kanały dodatkowe | trzeba wymienić wszystkie etykiety w kolejności transmisji; do cech trafia wyłącznie osiem kanałów EEG |
+| Czas / utrata pakietów | siatka czasu szacowana w odbiorniku, bez czasu akwizycji i numerów sekwencyjnych; nie każda utrata lub zmiana kolejności jest wykrywalna |
+
+Odbiera `gpype_source.py`, wspólny dla `calibrate.py` i `bci_bridge.py`. Wejście g.Pype wymaga profilu. Błędne ramki i wykryte przerwy zerują okna, a utrata świeżych danych neutralizuje wyniki. Rozmiar pakietu można sprawdzić, lecz nie da się automatycznie potwierdzić znaczenia kanałów lub jednostek bez metadanych. Źródło formatu: [oficjalny przykład UDPSendera](https://gpype.gtec.at/content/2_gpype_training/season4_crossing_borders/s4e3_sending_udp.html).
+
+Zachowana ścieżka opcjonalna: `calibrate.py --source lsl` i `lsl_bridge.py` odbierają LSL z metadanymi i korekcją zegara. Wymaga `requirements-lsl.txt`; nie jest zależnością toru g.Pype. Wspólny kod mostu można też wywołać jako `lsl_bridge.py --source gpype --profile ...`.
 
 ## 2. Wyjście: `bci/` → Unity
 
@@ -63,7 +74,7 @@ Most nie wie nic o grach: wysyła wszystkie sygnały, a każda gra wybiera, któ
 
 ### Sygnały z profilu kalibracji
 
-`lsl_bridge.py --profile <plik.json>` używa parametrów z czterech niezależnych widoków `calibrate.py`. Ten sam profil działa z każdym odbiornikiem; nie zawiera czynności ani nazw gier.
+`bci_bridge.py --profile <plik.json>` używa parametrów z czterech niezależnych widoków `calibrate.py`. Ten sam profil działa z każdym odbiornikiem Unity; nie zawiera czynności ani nazw gier. Dla wejścia LSL działa również `lsl_bridge.py --profile <plik.json>`.
 
 | `name` | Zakres | Znaczenie |
 |---|---|---|
@@ -89,12 +100,13 @@ Gry z pakietem `shared/bci-signals` przyjmują każdy sygnał o dowolnej nazwie 
 
 ## 3. Znaczniki: Unity → `bci/`
 
-Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do cięcia EEG na epoki (kalibracja P300) i do oceny wyników gracza.
+Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do oceny wyników gracza. Użycie do cięcia EEG na epoki P300 wymaga osobnego, zweryfikowanego toru synchronizacji; sam surowy strumień g.Pype UDP go nie zapewnia.
 
 - **Transport:** UDP na port `5006` komputera, z którego przychodzi sygnał BCI (dopóki nic nie przyszło: `127.0.0.1`). Ten sam format JSON, `type` = `"marker"`.
-- **Odbiór, jedno z dwóch** (oba słuchają na tym samym porcie):
-  - `python bci/lsl_bridge.py` publikuje je jako strumień LSL `BciMarkers` (typ `Markers`, jeden kanał tekstowy `"<name>:<value>"`, np. `"target:2"`). LabRecorder nagra go razem z EEG ze wspólnym zegarem. `--marker-name OgrodMarkers` zachowuje dawną nazwę. Kalibrator publikuje osobno `BciCalibrationMarkers` (`calibration/<sygnał>/<faza>:<próba>`).
-  - `python bci/marker_logger.py` zapisuje je do `data/raw/markers_<data>.csv`, gdy nie używacie LSL.
+- **Odbiór, jeden proces na porcie**:
+  - `bci_bridge.py --profile ...` zapisuje je domyślnie do `data/raw/bci_markers_*.jsonl`. Pola: `marker` (`"<name>:<value>"`), `t_monotonic_estimate` i `t_received_unix`. Ścieżkę zmienia `--marker-file`.
+  - `lsl_bridge.py` lub jawne `--marker-output lsl` publikuje **BciMarkers** (typ `Markers`, kanał tekstowy `"<name>:<value>"`). `--marker-name OgrodMarkers` zachowuje dawną nazwę; nagrywanie przez LabRecorder wymaga też strumienia EEG LSL.
+  - `python bci/marker_logger.py` zapisuje CSV w `data/raw/`. Jeśli działa obok mostu, most musi mieć `--no-markers`.
 - Gra zapisuje też własną kopię CSV w `Application.persistentDataPath`.
 - `value` to numer rośliny (0–3), a dla `grow` nowy poziom rośliny.
 
@@ -110,7 +122,9 @@ Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do cięcia EEG n
 | `mute` / `unmute` | gracz wyciszył lub włączył roślinę |
 | `garden` | powrót do ogrodu |
 
-Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w której dźwięk wyszedł z głośnika. Most przelicza go na zegar LSL, gdy gra działa na tym samym komputerze; przy grze na innym komputerze znacznik dostaje czas odbioru, czyli dochodzi opóźnienie sieci. Opóźnienie toru audio (rzędu kilkudziesięciu ms) trzeba zmierzyć przed kalibracją P300.
+Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w której dźwięk wyszedł z głośnika. Most przelicza go na lokalny zegar monotoniczny (lub LSL przy eksporcie LSL). Gdy różnica względem czasu odbioru przekracza 1 s, używa czasu odbioru. To heurystyka: nie synchronizuje zegarów dwóch komputerów ani toru audio. Przed kalibracją P300 potrzebny jest pomiar opóźnień i synchronizacja z właściwymi czasami próbek.
+
+Kalibrator ma osobny kanał zwrotny do `gp.UDPReceiver`: domyślnie UDP **56001**, jeden numeryczny kod ASCII na datagram. Kody 100–104 dotyczą oczu, 110–114 prawej ręki, 120–124 lewej i 130–134 szczęki; końcówka oznacza przygotowanie / spoczynek / zadanie / koniec / przerwanie. Nie jest to JSON. Szczegóły i tabela: [calibration.md](calibration.md#znaczniki). W opcjonalnym trybie LSL kalibrator zachowuje **BciCalibrationMarkers** (`calibration/<sygnał>/<faza>:<próba>`).
 
 ### Znaczniki gry Krojenie precla
 

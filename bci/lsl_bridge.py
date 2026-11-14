@@ -1,4 +1,7 @@
-"""Most między Unicornem a grą: EEG z LSL -> sygnały przez UDP, znaczniki z gry -> LSL.
+"""Most EEG -> generyczne sygnały UDP dla Unity.
+
+Nowe wejście: bci_bridge.py (g.Pype UDPSender). lsl_bridge.py zachowuje domyślny LSL.
+Obie nazwy obsługują --source gpype / lsl i ten sam profil / kod przetwarzania.
 
     python lsl_bridge.py --list                    # strumienie LSL widoczne w sieci
     python lsl_bridge.py                           # pierwszy strumień typu EEG, gra na tym komputerze
@@ -22,8 +25,8 @@ trzeba dobrać na prawdziwym sygnale.
 Z --profile: eyes_closed, right_hand, left_hand, jaw, laterality i flagi *_valid / *_active.
 Brak gotowej kalibracji nie uruchamia zastępczej heurystyki. focus pozostaje heurystyką.
 
-Znaczniki z gry (UDP 5006) trafiają do strumienia LSL "BciMarkers", więc LabRecorder
-nagra je razem z EEG. Nie uruchamiaj jednocześnie marker_logger.py (ten sam port).
+Znaczniki z gry (UDP 5006) trafiają do JSONL dla g.Pype lub do LSL "BciMarkers"
+dla wejścia LSL. Nie uruchamiaj jednocześnie marker_logger.py (ten sam port).
 Format wiadomości: docs/protocol.md.
 """
 
@@ -34,12 +37,12 @@ import socket
 import sys
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
-from pylsl import IRREGULAR_RATE, StreamInfo, StreamInlet, StreamOutlet, local_clock, resolve_byprop, resolve_streams
 from processing import FocusMeter, JawMeter, LateralityMeter, Window, RATE_HZ
-from lsl_source import LSLSource, assert_profile_source
-from profiles import ProfileEngine, load_profile
+from profiles import ProfileEngine, assert_profile_source, load_profile
+from gpype_source import GPypeUDPSource, add_udp_arguments
 
 
 def channel_labels(info):
@@ -54,6 +57,7 @@ def channel_labels(info):
 
 
 def list_streams():
+    from pylsl import resolve_streams
     streams = resolve_streams(2.0)
     if not streams:
         print("Nie widzę żadnych strumieni LSL. Czy Unicorn Suite (LSL) działa i komputery są w tej samej sieci?")
@@ -63,6 +67,7 @@ def list_streams():
 
 
 def find_stream(name, stream_type, timeout):
+    from pylsl import resolve_byprop
     prop, value = ("name", name) if name else ("type", stream_type)
     print(f"Szukam strumienia LSL ({prop}={value!r})...")
     found = resolve_byprop(prop, value, minimum=1, timeout=timeout)
@@ -82,12 +87,14 @@ def send(sock, addr, name, value, kind="metric"):
     sock.sendto(json.dumps(msg, allow_nan=False).encode("utf-8"), addr)
 
 
-def run_markers(sock, outlet):
+def run_markers(sock, outlet, clock=time.monotonic):
     warned = False
     while True:
         try:
             data, _ = sock.recvfrom(4096)
         except OSError:
+            if hasattr(outlet, "close"):
+                outlet.close()
             return
         try:
             msg = json.loads(data)
@@ -96,7 +103,7 @@ def run_markers(sock, outlet):
                 continue
         except (ValueError, KeyError, TypeError):
             continue
-        # czas zdarzenia w grze przeliczony na zegar LSL; gdy gra działa na innym komputerze,
+        # czas zdarzenia w grze przeliczony na zegar wyjścia; gdy gra działa na innym komputerze,
         # zegary się różnią i zostaje czas odbioru (dokładność rzędu opóźnienia sieci)
         age = time.time() - t
         if abs(age) > 1.0:
@@ -104,7 +111,22 @@ def run_markers(sock, outlet):
                 print(f"Zegar gry różni się o {age:.1f} s, znaczniki dostają czas odbioru.")
                 warned = True
             age = 0.0
-        outlet.push_sample([f"{name}:{value:g}"], local_clock() - age)
+        outlet.push_sample([f"{name}:{value:g}"], clock() - age)
+
+
+class MarkerFileOutlet:
+    def __init__(self, path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = path.open("a", encoding="utf-8")
+
+    def push_sample(self, sample, timestamp):
+        self.file.write(json.dumps({"marker": sample[0], "t_monotonic_estimate": timestamp,
+                                    "t_received_unix": time.time()}, ensure_ascii=False) + "\n")
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
 
 
 def start_markers(args):
@@ -113,13 +135,24 @@ def start_markers(args):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("0.0.0.0", args.marker_port))
-        info = StreamInfo(args.marker_name, "Markers", 1, IRREGULAR_RATE, "string", "bci-markers")
-        outlet = StreamOutlet(info)
+        mode = args.marker_output if args.marker_output != "auto" else ("jsonl" if args.source == "gpype" else "lsl")
+        clock = time.monotonic
+        if mode == "lsl":
+            from pylsl import IRREGULAR_RATE, StreamInfo, StreamOutlet, local_clock
+            info = StreamInfo(args.marker_name, "Markers", 1, IRREGULAR_RATE, "string", "bci-markers")
+            outlet = StreamOutlet(info)
+            clock = local_clock
+            destination = f"LSL {args.marker_name!r}"
+        else:
+            path = args.marker_file or (Path(__file__).resolve().parents[1] / "data/raw" /
+                                        time.strftime("bci_markers_%Y%m%d_%H%M%S.jsonl"))
+            outlet = MarkerFileOutlet(path)
+            destination = str(path)
     except Exception:
         sock.close()
         raise
-    threading.Thread(target=run_markers, args=(sock, outlet), daemon=True).start()
-    print(f"Znaczniki: UDP {args.marker_port} -> LSL {args.marker_name!r}")
+    threading.Thread(target=run_markers, args=(sock, outlet, clock), daemon=True).start()
+    print(f"Znaczniki: UDP {args.marker_port} -> {destination}")
     return sock
 
 
@@ -127,10 +160,25 @@ def run_calibrated(args):
     profile = load_profile(args.profile)
     engine = ProfileEngine(profile)
     config = engine.config
-    source = LSLSource(args.name, args.type,
-                       units=args.units or profile["stream"].get("units_option", "auto"),
-                       assume_unicorn_order=args.assume_unicorn_order or profile["stream"].get("assumed_unicorn_order", False),
-                       artifact_uv=config.artifact_uv, jaw_band=config.jaw_band)
+    if args.source == "gpype":
+        saved = profile["stream"].get("input", {})
+        options = {"host": "127.0.0.1", "port": 56000, "sampling_rate": config.sampling_rate,
+                   "labels": config.channel_labels, "units": "uv" if config.input_scale_uv == 1 else "v",
+                   "byte_order": "little", "frame_samples": 4}
+        options.update(saved)
+        for key, value in (("host", args.udp_host), ("port", args.udp_port), ("sampling_rate", args.sampling_rate),
+                           ("labels", args.channel_labels), ("units", args.units),
+                           ("byte_order", args.byte_order), ("frame_samples", args.frame_samples)):
+            if value is not None:
+                options[key] = value
+        source = GPypeUDPSource(**options, artifact_uv=config.artifact_uv, jaw_band=config.jaw_band,
+                               simulated=args.synthetic_input)
+    else:
+        from lsl_source import LSLSource
+        source = LSLSource(args.name, args.type,
+                           units=args.units or profile["stream"].get("units_option", "auto"),
+                           assume_unicorn_order=args.assume_unicorn_order or profile["stream"].get("assumed_unicorn_order", False),
+                           artifact_uv=config.artifact_uv, jaw_band=config.jaw_band)
     marker_socket = None
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -148,6 +196,8 @@ def run_calibrated(args):
         print(f"Gotowe detektory: {', '.join(engine.detectors) or 'BRAK — wykonaj kalibrację'}")
         print(f"EEG: {source.stream['name']} · {config.sampling_rate:g} Hz -> {targets}")
         print("focus = nieskalibrowana heurystyka. Wyniki 0–1 nie są prawdopodobieństwami.")
+        if args.source == "gpype":
+            print("g.Pype UDP: czas próbek jest szacowany po stronie odbiornika; pakiety nie zawierają czasu akwizycji.")
         window = Window(config.sampling_rate, config.channel_count)
         focus = FocusMeter(config.eeg_channels[:5], config.artifact_uv)
         next_tick = next_report = time.monotonic()
@@ -192,6 +242,8 @@ def run_calibrated(args):
                 next_report = now + 1
                 print("  ".join(f"{name}={item['value']:.2f}{'*' if item['active'] else ''}"
                                 f"{' (brak)' if not item['valid'] else ''}" for name, item in results.items()))
+                if hasattr(source, "diagnostics"):
+                    print(f"UDP: {source.diagnostics()}")
             time.sleep(0.005)
     except KeyboardInterrupt:
         pass
@@ -202,9 +254,11 @@ def run_calibrated(args):
             marker_socket.close()
 
 
-def main():
+def main(default_source="lsl"):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--list", action="store_true", help="pokaż strumienie LSL i zakończ")
+    parser.add_argument("--source", choices=("gpype", "lsl"), default=default_source)
+    add_udp_arguments(parser, defaults=False)
     parser.add_argument("--name", help="nazwa strumienia EEG (domyślnie pierwszy o typie --type)")
     parser.add_argument("--type", default="EEG", help="typ strumienia EEG (domyślnie EEG)")
     parser.add_argument("--channels", default="0,1,2,3,4",
@@ -219,14 +273,17 @@ def main():
     parser.add_argument("--game-host", "--host", default="127.0.0.1")
     parser.add_argument("--game-port", "--port", type=int, default=5005)
     parser.add_argument("--profile", help="profil JSON z calibrate.py; montaż i cechy są wczytywane z profilu")
-    parser.add_argument("--units", choices=("auto", "uv", "v"), help="jednostki LSL w trybie --profile")
+    parser.add_argument("--units", choices=("auto", "uv", "v"), help="jednostki EEG; UDP wymaga uv albo v")
     parser.add_argument("--assume-unicorn-order", action="store_true", help="potwierdź standardowy montaż przy braku etykiet LSL")
-    parser.add_argument("--allow-simulated", action="store_true", help="pozwól na profil DEMO wyłącznie z fake-* LSL")
+    parser.add_argument("--allow-simulated", action="store_true", help="profil DEMO: dla UDP wymaga też --synthetic-input")
     parser.add_argument("--target", action="append", default=[], help="dodatkowy odbiorca HOST:PORT (z --profile)")
     parser.add_argument("--no-commands", action="store_true", help="tylko metryki; bez komend left/right z profilu")
     parser.add_argument("--marker-port", type=int, default=5006)
-    parser.add_argument("--no-markers", action="store_true", help="nie publikuj znaczników z gry w LSL")
+    parser.add_argument("--no-markers", action="store_true", help="wyłącz odbiornik znaczników gry (UDP 5006)")
     parser.add_argument("--marker-name", default="BciMarkers", help="nazwa strumienia znaczników, np. OgrodMarkers dla starych nagrań")
+    parser.add_argument("--marker-output", choices=("auto", "jsonl", "lsl"), default="auto",
+                        help="auto: JSONL dla g.Pype, LSL dla starego wejścia LSL")
+    parser.add_argument("--marker-file", help="plik znaczników JSONL (domyślnie data/raw/bci_markers_*.jsonl)")
     args = parser.parse_args()
 
     if args.list:
@@ -236,13 +293,16 @@ def main():
     if args.profile:
         try:
             run_calibrated(args)
-        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError, ImportError) as exc:
             sys.exit(f"Nie można uruchomić profilu: {exc}")
         return
+    if args.source == "gpype":
+        parser.error("Wejście g.Pype wymaga --profile. Najpierw wykonaj kalibrację: python bci/calibrate.py")
     if args.target or args.units or args.assume_unicorn_order or args.allow_simulated:
         parser.error("--target, --units, --assume-unicorn-order i --allow-simulated wymagają --profile")
     print("Tryb bez profilu: nieskalibrowane heurystyki. Kalibracja: python bci/calibrate.py")
 
+    from pylsl import StreamInlet
     info = find_stream(args.name, args.type, timeout=10)
     inlet = StreamInlet(info, max_buflen=10)
     full = inlet.info()

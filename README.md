@@ -17,7 +17,7 @@ Możliwe kierunki:
 ## Stack
 
 - **Sprzęt:** g.tec Unicorn Hybrid Black (8 kanałów EEG)
-- **Strumieniowanie danych:** LSL (Lab Streaming Layer), UDP
+- **Strumieniowanie danych:** g.Pype UDPSender → Python → UDP/JSON do Unity; opcjonalnie LSL
 - **Integracje:** Python, Unity
 - **Paradygmaty BCI:** P300, analiza widmowa sygnału
 
@@ -91,14 +91,14 @@ Strażnicy nie widzą, ale słyszą: kroki gracza (skradanie jest dużo cichsze)
 | mysz (po kliknięciu w okno) albo Q / E | obrót |
 | R | restart po wpadce (albo zamknięcie oczu na 1,5 s) |
 
-**Sygnał:** gra słucha `eyes_closed_active` z mostu uruchomionego z profilem kalibracji (`lsl_bridge.py --profile ...`, patrz `docs/calibration.md`). Warstwa sygnałów to wspólny pakiet `shared/bci-signals`; powiązanie jest w `mrok/Assets/Resources/signals.json`.
+**Sygnał:** gra słucha `eyes_closed_active` z mostu uruchomionego z profilem kalibracji (`bci_bridge.py --profile ...`, patrz `docs/calibration.md`). Warstwa sygnałów to wspólny pakiet `shared/bci-signals`; powiązanie jest w `mrok/Assets/Resources/signals.json`.
 
 ## Wspólna warstwa sygnałów (`shared/bci-signals`)
 
 Lokalny pakiet Unity używany przez `precel/` i `mrok/` (wpis `com.hotb.bci-signals` w `Packages/manifest.json`). Nową grę podłącza się tym samym wpisem i własnym plikiem `Resources/signals.json`.
 
 - `SignalHub`: tablica nazwanych sygnałów (nazwa, liczba, źródło). Gra nie wie, skąd pochodzą.
-- `UdpSignalSource`: wpisuje do tablicy wszystko, co nadaje most (`bci/lsl_bridge.py`), bez listy znanych nazw.
+- `UdpSignalSource`: wpisuje do tablicy wszystko, co nadaje most (`bci/bci_bridge.py` lub opcjonalny `bci/lsl_bridge.py`), bez listy znanych nazw.
 - `KeyboardSignalSource`: udaje te same sygnały klawiszami.
 - `SignalBindings`: wiąże czynność gry z sygnałem i ustawia wzmocnienie, martwą strefę, wygładzanie i próg. Respektuje flagi `<sygnał>_valid` z mostu z profilem kalibracji: sygnał oznaczony jako nieważny liczy się jak brak sygnału. Pole `fallback` wskazuje sygnał zastępczy.
 - `MarkerSender`: znaczniki zdarzeń gry odsyłane do mostu.
@@ -109,12 +109,13 @@ Ogród dźwięków (`unity/`) ma starszą, własną warstwę (`Brain/`) opartą 
 
 | Folder | Zawartość |
 |---|---|
-| `bci/` | Python: odczyt EEG z Unicorna (LSL), przetwarzanie, klasyfikacja, wysyłka do gry |
+| `bci/` | Python: odczyt EEG z g.Pype UDP (opcjonalnie LSL), cztery kalibracje, profile, przetwarzanie, wysyłka do gry |
 | `unity/` | projekt Unity z grą Ogród dźwięków |
 | `precel/` | projekt Unity z grą Mistrzostwa w krojeniu precla na pół |
 | `mrok/` | projekt Unity z grą Mrok |
 | `shared/bci-signals/` | pakiet Unity: warstwa sygnałów wspólna dla gier |
-| `docs/protocol.md` | kontrakt między `bci/` a grą: strumienie LSL, porty, format wiadomości |
+| `docs/protocol.md` | kontrakt między `bci/` a grą: wejście g.Pype, porty, format wiadomości |
+| `docs/calibration.md` | konfiguracja UDPSendera, obsługa kalibratora, profile i testy |
 | `data/` | nagrania EEG (`data/raw/` nie trafia do repo) |
 
 ## Uruchomienie
@@ -128,7 +129,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Jeśli `import pylsl` zgłasza brak biblioteki liblsl (zdarza się na macOS/Linux): `brew install labstreaminglayer/tap/lsl` albo `conda install -c conda-forge liblsl`.
+To zależności mostu. Kalibrator z interfejsem wymaga dodatkowo `requirements-calibration.txt` i Pythona 3.9–3.13. Odbiór g.Pype nie potrzebuje `pylsl`, liblsl ani instalacji g.Pype w tym samym środowisku.
 
 ### Atrapa sygnału (bez headsetu)
 
@@ -139,17 +140,35 @@ python bci/mock_sender.py                # losowe komendy co 2–4 s + płynnie 
 python bci/mock_sender.py --interactive  # wpisujesz np. "left" albo "focus 0.8"
 ```
 
-### Most LSL (`bci/lsl_bridge.py`)
+### Kalibracja i most g.Pype (`bci/bci_bridge.py`)
 
 **Kalibracja użytkownika:** `bci/calibrate.py` jest niezależną aplikacją z czterema widokami: oczy zamknięte, wyobrażanie ruchu prawej dłoni, lewej dłoni oraz szczęka (EMG). Zapisuje wspólny dla wszystkich gier profil JSON z parametrami i oceną rozdzielności. Instalacja interfejsu: Python 3.9–3.13 i `pip install -r bci/requirements-calibration.txt`. Pełna instrukcja: [docs/calibration.md](docs/calibration.md).
 
 ```sh
-python bci/calibrate.py                         # rzeczywisty Unicorn przez LSL
+python bci/calibrate.py                         # wejście: standardowy g.Pype UDPSender
 python bci/calibrate.py --demo                  # cztery widoki na sygnale syntetycznym
-python bci/lsl_bridge.py --profile data/calibration/participant.json --name NAZWA_LSL
+# Po wykonaniu kalibracji wybierz „Rozłącz”, aby zwolnić port EEG:
+python bci/bci_bridge.py --profile data/calibration/participant_gpype.json
 ```
 
-Z profilem most wysyła `eyes_closed`, `right_hand`, `left_hand`, `jaw`, `laterality` oraz flagi ważności i aktywacji. Zachowuje komendy `left`/`right` dla ogrodu. Brakująca lub nieudana kalibracja daje neutralny sygnał, bez zastępowania jej heurystyką. Dotychczasowy `focus` pozostaje nieskalibrowaną heurystyką.
+Domyślny odbiór: `127.0.0.1:56000`, surowe `float64` little-endian, 250 Hz, osiem kanałów `Fz,C3,Cz,C4,Pz,PO7,Oz,PO8` w µV, cztery próbki na pakiet. W g.Pype ustaw pełnopasmową gałąź EEG → `gp.UDPSender(ip="127.0.0.1", port=56000, frame_size_out=4)`. Przykład nadajnika: `python bci/gpype_unicorn_sender.py` w środowisku g.Pype. Dla istniejącego pipeline'u z inną ramką lub kanałami zmień ustawienia odbiornika. Zapisują się w profilu; most odczytuje je automatycznie.
+
+Kalibrator i most zajmują ten sam port EEG, więc korzysta się z nich kolejno. Pakiety UDPSendera nie zawierają czasu akwizycji; odbiornik szacuje go lokalnie. To wejście do obecnych kalibracji widmowych, nie gotowy tor precyzyjnej kalibracji P300.
+
+Z profilem most wysyła `eyes_closed`, `right_hand`, `left_hand`, `jaw`, `laterality` oraz flagi ważności i aktywacji. Zachowuje komendy `left`/`right` dla ogrodu. Brakująca lub nieudana kalibracja daje neutralny sygnał. Dotychczasowy `focus` pozostaje nieskalibrowaną heurystyką. Znaczniki gier z portu 5006 zapisują się domyślnie do `data/raw/bci_markers_*.jsonl`.
+
+Test transportu bez urządzenia, w dwóch terminalach:
+
+```sh
+python bci/fake_gpype.py --follow-triggers
+python bci/calibrate.py --synthetic-input --profile data/calibration/fake_gpype.json
+```
+
+Po kalibracji rozłącz kalibrator, uruchom `fake_gpype.py` bez `--follow-triggers` i most z `--profile data/calibration/fake_gpype.json --synthetic-input --allow-simulated`. To wyłącznie demonstracja na danych syntetycznych.
+
+### Opcjonalny most LSL (`bci/lsl_bridge.py`)
+
+Instalacja: `pip install -r bci/requirements-lsl.txt`. Jeśli `import pylsl` zgłasza brak liblsl: `brew install labstreaminglayer/tap/lsl` albo `conda install -c conda-forge liblsl`. Kalibrator przełącza wejście przez `--source lsl` lub pole „Wejście”.
 
 Bez profilu czyta EEG z Unicorna przez LSL, liczy dotychczasowe heurystyki `focus`, `laterality` i `jaw` i wysyła je do gry. Znaczniki publikuje jako strumień LSL `BciMarkers` (do nagrania w LabRecorderze razem z EEG); dawną nazwę przywraca `--marker-name OgrodMarkers`. Szczegóły: `docs/protocol.md`.
 
@@ -159,14 +178,14 @@ python bci/lsl_bridge.py                           # pierwszy strumień typu EEG
 python bci/lsl_bridge.py --name <nazwa strumienia> --game-host <IP komputera z grą>
 ```
 
-Most może działać na komputerze z Unicornem (Unicorn Suite jest tylko na Windowsa), a gra na innym. Wtedy podajcie `--game-host`. Gra sama odsyła znaczniki na adres, z którego przychodzi `focus`.
+Oba mosty mogą działać na innym komputerze niż gra. Wtedy podajcie `--game-host`. Gra odsyła znaczniki na adres nadawcy sygnałów. `lsl_bridge.py --source gpype --profile ...` korzysta z tej samej implementacji co `bci_bridge.py`; różni je domyślny transport.
 
 Bez headsetu: `python bci/fake_unicorn.py` nadaje sztuczny strumień LSL (8 kanałów, 250 Hz), na którym `focus` faluje co 30 s, `laterality` co 20 s, a `jaw` odzywa się co 12 s.
 
 ### Znaczniki bez LSL
 
 ```
-python bci/marker_logger.py              # zapisuje zdarzenia gry do data/raw/ (zamiast mostu, ten sam port)
+python bci/marker_logger.py              # opcjonalny CSV; uruchom most z --no-markers (ten sam port)
 ```
 
 ### Unity (`unity/`)

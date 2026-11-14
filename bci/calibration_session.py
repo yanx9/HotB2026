@@ -82,7 +82,8 @@ class CalibrationSession:
     def ingest(self, samples, timestamps):
         if self.phase not in ("rest", "active") or self.completed or self.cancelled:
             return
-        # Epoch boundaries use corrected acquisition timestamps, never chunk arrival time.
+        # Use the source's common monotonic grid: corrected acquisition time for
+        # LSL, receiver-estimated time for raw g.Pype UDP (no clock on the wire).
         for sample, timestamp in zip(samples, timestamps):
             if not self.phase_started + self.protocol.settle_s <= timestamp <= self.phase_end:
                 continue
@@ -119,7 +120,7 @@ class DemoSource:
     def __init__(self):
         from processing import FeatureConfig
         self.config = FeatureConfig()
-        self.stream = {"name": "DEMO — syntetyczny Unicorn", "source_id": "fake-calibration-demo"}
+        self.stream = {"name": "DEMO — syntetyczny Unicorn", "source_id": "fake-calibration-demo", "transport": "demo"}
         self.simulated = True
         self.rng = np.random.default_rng(42)
         self.state = "rest"

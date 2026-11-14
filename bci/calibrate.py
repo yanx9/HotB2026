@@ -3,7 +3,10 @@
     python bci/calibrate.py
     python bci/calibrate.py --demo --profile data/calibration/demo.json
 
-The UI runs on the main thread; LSL discovery/acquisition, fitting and atomic
+Default input: g.Pype UDPSender, float64 LE, 8 channels, 250 Hz, 4 samples/packet,
+127.0.0.1:56000. --source lsl enables the optional legacy LSL adapter.
+
+The UI runs on the main thread; acquisition, fitting and atomic
 profile writes run on one worker thread. No game or Unity installation needed.
 """
 
@@ -27,12 +30,13 @@ try:
 except ImportError as exc:
     raise SystemExit(f"Nie można załadować Qt: {exc}\nZainstaluj interfejs: pip install -r bci/requirements-calibration.txt")
 
-from pylsl import IRREGULAR_RATE, StreamInfo, StreamOutlet, local_clock
+from time import monotonic as local_clock
 
 from calibration_session import CalibrationSession, DemoSource, Protocol
-from lsl_source import LSLSource, assert_profile_source, discover_streams
+from gpype_source import GPypeUDPSource, add_udp_arguments
+from calibration_markers import GPypeCalibrationMarkers, LSLCalibrationMarkers
 from processing import SIGNALS, Window
-from profiles import ProfileEngine, fit_calibration, load_profile, new_profile, save_profile
+from profiles import ProfileEngine, assert_profile_source, fit_calibration, load_profile, new_profile, save_profile
 
 
 VIEWS = {
@@ -97,6 +101,7 @@ class Worker(QObject):
         if self.recording:
             return
         try:
+            from lsl_source import discover_streams
             self.streams.emit(discover_streams())
         except Exception as exc:
             self.error.emit(str(exc))
@@ -105,10 +110,18 @@ class Worker(QObject):
     def connect_source(self, options):
         self.disconnect_source()
         try:
-            self.source = DemoSource() if options["demo"] else LSLSource(
-                options["name"] or None, units=options["units"],
-                assume_unicorn_order=options["assume_order"], artifact_uv=options["artifact_uv"],
-                jaw_band=options["jaw_band"])
+            source_kind = options.get("source", "gpype")
+            if options["demo"]:
+                self.source = DemoSource()
+            elif source_kind == "gpype":
+                self.source = GPypeUDPSource(**options["udp"], artifact_uv=options["artifact_uv"],
+                                            jaw_band=options["jaw_band"], units=options["units"],
+                                            simulated=options.get("synthetic_input", False))
+            else:
+                from lsl_source import LSLSource
+                self.source = LSLSource(options["name"] or None, units=options["units"],
+                                        assume_unicorn_order=options["assume_order"], artifact_uv=options["artifact_uv"],
+                                        jaw_band=options["jaw_band"])
             self.path = Path(options["path"]).expanduser().resolve()
             if not options["subject"].strip():
                 raise ValueError("Podaj identyfikator osoby / sesji (bez danych osobowych).")
@@ -116,7 +129,7 @@ class Worker(QObject):
                 self.profile = load_profile(self.path)
                 if self.profile["subject"] != options["subject"]:
                     raise ValueError("Ten plik należy do innego identyfikatora. Wybierz nową ścieżkę lub zgodny identyfikator.")
-                assert_profile_source(self.profile, self.source, allow_simulated=options["demo"])
+                assert_profile_source(self.profile, self.source, allow_simulated=self.source.simulated)
             else:
                 self.profile = new_profile(options["subject"], self.source.config, self.source.stream,
                                            self.source.simulated)
@@ -124,9 +137,10 @@ class Worker(QObject):
             self.window = Window(self.source.config.sampling_rate, self.source.config.channel_count)
             self.demo_next = self.last_data = local_clock()
             self.last_report = 0
-            if not self.source.simulated:
-                self.outlet = StreamOutlet(StreamInfo("BciCalibrationMarkers", "Markers", 1,
-                                                       IRREGULAR_RATE, "string", "bci-calibration-markers"))
+            if not options["demo"]:
+                self.outlet = (GPypeCalibrationMarkers(options.get("trigger_host", "127.0.0.1"),
+                                                        options.get("trigger_port", 56001))
+                               if source_kind == "gpype" else LSLCalibrationMarkers())
             if self.timer is None:
                 self.timer = QTimer(self)
                 self.timer.setInterval(10)
@@ -146,6 +160,8 @@ class Worker(QObject):
             self.timer.stop()
         if self.source and hasattr(self.source, "close"):
             self.source.close()
+        if self.outlet:
+            self.outlet.close()
         self.source = self.profile = self.engine = self.outlet = None
         self.session = None
         self.recording = False
@@ -155,7 +171,7 @@ class Worker(QObject):
     def start_calibration(self, name, trials):
         if self.source is None or self.recording:
             return
-        if not self.source.simulated and not self.source.fresh():
+        if not isinstance(self.source, DemoSource) and not self.source.fresh():
             self.error.emit("Brak świeżych próbek. Nie rozpoczynam kalibracji.")
             return
         try:
@@ -181,7 +197,7 @@ class Worker(QObject):
 
     def marker(self, phase, now):
         if self.outlet:
-            self.outlet.push_sample([f"calibration/{self.session.name}/{phase}:{self.session.trial}"], now)
+            self.outlet.emit(self.session.name, phase, self.session.trial, now)
 
     @Slot()
     def tick(self):
@@ -189,7 +205,7 @@ class Worker(QObject):
             return
         try:
             now = local_clock()
-            if self.source.simulated:
+            if isinstance(self.source, DemoSource):
                 count = min(250, max(0, int((now - self.demo_next) * 250)))
                 stamps = self.demo_next + np.arange(count) / 250
                 self.demo_next += count / 250
@@ -201,6 +217,11 @@ class Worker(QObject):
                 fresh = self.source.fresh()
                 if self.source.gap:
                     self.window.clear()
+                    for detector in self.engine.detectors.values():
+                        detector.reset()
+                    if self.recording:
+                        self.session.window.clear()
+                        self.session.last_sample = None
             if len(stamps):
                 self.window.push(samples)
                 self.last_data = now if fresh else self.last_data
@@ -224,7 +245,8 @@ class Worker(QObject):
                 self.last_report = now
                 self.preview = self.engine.update(self.window, now, fresh=fresh)
                 self.state.emit({"session": self.session.snapshot(now) if self.session else None,
-                                 "fresh": fresh, "preview": self.preview, "recording": self.recording})
+                                 "fresh": fresh, "preview": self.preview, "recording": self.recording,
+                                 "diagnostics": self.source.diagnostics() if hasattr(self.source, "diagnostics") else None})
         except Exception as exc:
             self.cancel()
             if self.timer:
@@ -330,7 +352,7 @@ class CalibrationApp(QMainWindow):
     def __init__(self, args):
         super().__init__()
         self.setWindowTitle("BCI · Kalibracja Unicorn Hybrid Black")
-        self.resize(1080, 850)
+        self.resize(1080, 960)
         self.connected_flag = self.recording = self.connecting = False
         self.saved_results = {}
         self.thread = QThread(self)
@@ -360,6 +382,11 @@ class CalibrationApp(QMainWindow):
         layout.addWidget(self.status)
 
         form = QFormLayout()
+        self.source_kind = QComboBox()
+        self.source_kind.addItem("g.Pype UDPSender", "gpype")
+        self.source_kind.addItem("LSL (opcjonalnie)", "lsl")
+        self.source_kind.setCurrentIndex(self.source_kind.findData(args.source))
+        form.addRow("Wejście", self.source_kind)
         self.stream = QComboBox()
         self.stream.setEditable(True)
         self.stream.setMinimumWidth(240)
@@ -376,6 +403,45 @@ class CalibrationApp(QMainWindow):
             row.addWidget(widget)
         form.addRow("Źródło", row)
 
+        self.udp_panel = QWidget()
+        udp_form = QFormLayout(self.udp_panel)
+        udp_form.setContentsMargins(0, 0, 0, 0)
+        self.udp_host = QLineEdit(args.udp_host)
+        self.udp_port = QSpinBox()
+        self.udp_port.setRange(1024, 65535)
+        self.udp_port.setValue(args.udp_port)
+        self.sampling_rate = QDoubleSpinBox()
+        self.sampling_rate.setRange(100, 4000)
+        self.sampling_rate.setValue(args.sampling_rate)
+        self.sampling_rate.setSuffix(" Hz")
+        self.frame_samples = QSpinBox()
+        self.frame_samples.setRange(0, 1000)
+        self.frame_samples.setSpecialValueText("Zmienna ramka")
+        self.frame_samples.setValue(args.frame_samples)
+        row = QHBoxLayout()
+        for widget in (self.udp_host, QLabel("Port EEG"), self.udp_port, self.sampling_rate,
+                       QLabel("Próbki / pakiet"), self.frame_samples):
+            row.addWidget(widget)
+        udp_form.addRow("Odbiornik UDP", row)
+        self.channel_labels = QLineEdit(args.channel_labels)
+        self.byte_order = QComboBox()
+        self.byte_order.addItem("float64 little-endian", "little")
+        self.byte_order.addItem("float64 big-endian", "big")
+        self.byte_order.setCurrentIndex(self.byte_order.findData(args.byte_order))
+        row = QHBoxLayout()
+        row.addWidget(self.channel_labels, 2)
+        row.addWidget(self.byte_order)
+        udp_form.addRow("Kanały w pakiecie", row)
+        self.synthetic_input = QCheckBox("Zewnętrzny nadajnik testowy (profil syntetyczny)")
+        self.synthetic_input.setChecked(args.synthetic_input)
+        udp_form.addRow("", self.synthetic_input)
+        udp_note = QLabel("UDP nie podaje metadanych ani czasu pomiaru. Ustawienia muszą odpowiadać nadajnikowi. "
+                         "Nie uruchamiaj mostu i kalibratora na tym samym porcie EEG.")
+        udp_note.setWordWrap(True)
+        udp_form.addRow(udp_note)
+        form.addRow(self.udp_panel)
+        self.trigger_host, self.trigger_port = args.trigger_host, args.trigger_port
+
         self.subject = QLineEdit(args.subject)
         self.profile_path = QLineEdit(str(args.profile))
         choose = QPushButton("Wybierz plik…")
@@ -389,7 +455,7 @@ class CalibrationApp(QMainWindow):
         self.units = QComboBox()
         for label, key in (("Jednostki z LSL", "auto"), ("Mikrowolty (µV)", "uv"), ("Wolty (V)", "v")):
             self.units.addItem(label, key)
-        self.units.setCurrentIndex(self.units.findData(args.units))
+        self.units.setCurrentIndex(self.units.findData(args.units or ("uv" if args.source == "gpype" else "auto")))
         self.assume = QCheckBox("Potwierdzam standardową kolejność 8 kanałów Unicorna, gdy brak etykiet")
         self.assume.setChecked(args.assume_unicorn_order)
         row = QHBoxLayout()
@@ -408,7 +474,10 @@ class CalibrationApp(QMainWindow):
         form.addRow("Cechy", row)
         layout.addLayout(form)
         self.source_widgets = [self.stream, self.scan_button, self.demo, self.subject, self.profile_path,
-                               choose, self.units, self.assume, self.artifact, self.jaw_band]
+                               choose, self.units, self.assume, self.artifact, self.jaw_band,
+                               self.source_kind, self.udp_host, self.udp_port, self.sampling_rate,
+                               self.frame_samples, self.channel_labels, self.byte_order, self.synthetic_input]
+        self.source_kind.currentIndexChanged.connect(self.on_source_change)
 
         row = QHBoxLayout()
         self.audio_confirm = QCheckBox("Słyszę oba tony i znam ich znaczenie")
@@ -462,6 +531,10 @@ class CalibrationApp(QMainWindow):
         self.sounds.play("active")
         QTimer.singleShot(700, lambda: self.sounds.play("rest"))
 
+    def on_source_change(self):
+        self.units.setCurrentIndex(self.units.findData("uv" if self.source_kind.currentData() == "gpype" else "auto"))
+        self.update_buttons()
+
     def select_view(self, index):
         self.stack.setCurrentIndex(index)
         for i, button in enumerate(self.nav_buttons):
@@ -487,7 +560,12 @@ class CalibrationApp(QMainWindow):
             self.connect_requested.emit({"demo": self.demo.isChecked(), "name": self.stream.currentText(),
                 "subject": self.subject.text().strip(), "path": self.profile_path.text(),
                 "units": self.units.currentData(), "assume_order": self.assume.isChecked(),
-                "artifact_uv": self.artifact.value(), "jaw_band": band})
+                "artifact_uv": self.artifact.value(), "jaw_band": band, "source": self.source_kind.currentData(),
+                "udp": {"host": self.udp_host.text().strip(), "port": self.udp_port.value(),
+                        "sampling_rate": self.sampling_rate.value(), "labels": self.channel_labels.text(),
+                        "byte_order": self.byte_order.currentData(), "frame_samples": self.frame_samples.value()},
+                "synthetic_input": self.synthetic_input.isChecked(),
+                "trigger_host": self.trigger_host, "trigger_port": self.trigger_port})
         except ValueError as exc:
             self.on_error(str(exc))
 
@@ -542,6 +620,12 @@ class CalibrationApp(QMainWindow):
                                   f"{result['reason'] or 'sygnał poprawny'}")
         if not state["fresh"] and session:
             self.views[session["name"]].quality.setText("Brak świeżych danych EEG — sprawdź połączenie.")
+        diagnostics = state.get("diagnostics")
+        if diagnostics:
+            self.status.setText(f"g.Pype UDP · pakiety: {diagnostics['packets']} · "
+                                f"odrzucone: {diagnostics['invalid_packets']} · "
+                                f"resynchronizacje: {diagnostics['timing_resets']} · "
+                                f"{'dane aktualne' if state['fresh'] else 'CZEKAM NA DANE — sprawdź format / port nadajnika'}")
         self.update_buttons()
 
     def on_result(self, name, result):
@@ -565,6 +649,10 @@ class CalibrationApp(QMainWindow):
             button.setEnabled(not self.recording)
         for widget in self.source_widgets:
             widget.setEnabled(not self.connected_flag and not self.connecting)
+        is_lsl = self.source_kind.currentData() == "lsl"
+        self.udp_panel.setVisible(not is_lsl)
+        for widget in (self.stream, self.scan_button, self.assume):
+            widget.setVisible(is_lsl)
         self.connect_button.setText("Rozłącz" if self.connected_flag else "Połącz")
         self.connect_button.setEnabled(not self.recording and not self.connecting)
         self.test_audio.setEnabled(not self.recording)
@@ -585,17 +673,22 @@ def parser():
     cli.add_argument("--subject", default="participant")
     cli.add_argument("--profile", type=Path, default=None)
     cli.add_argument("--demo", action="store_true")
-    cli.add_argument("--units", choices=("auto", "uv", "v"), default="auto")
+    cli.add_argument("--source", choices=("gpype", "lsl"), default="gpype")
+    cli.add_argument("--units", choices=("auto", "uv", "v"), help="domyślnie uv dla UDP, auto dla LSL")
     cli.add_argument("--assume-unicorn-order", action="store_true")
     cli.add_argument("--artifact-uv", type=float, default=200)
     cli.add_argument("--jaw-band", default="55,95")
+    add_udp_arguments(cli)
+    cli.add_argument("--trigger-host", default="127.0.0.1", help="adres gp.UDPReceiver dla znaczników kalibracji")
+    cli.add_argument("--trigger-port", type=int, default=56001)
     return cli
 
 
 def main():
     args = parser().parse_args()
     if args.profile is None:
-        args.profile = Path(__file__).resolve().parents[1] / "data/calibration" / ("demo.json" if args.demo else "participant.json")
+        args.profile = Path(__file__).resolve().parents[1] / "data/calibration" / (
+            "demo.json" if args.demo else "participant_gpype.json" if args.source == "gpype" else "participant.json")
     app = QApplication(sys.argv[:1])
     window = CalibrationApp(args)
     window.show()
