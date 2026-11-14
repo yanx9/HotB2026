@@ -59,6 +59,7 @@ namespace Ogrod.Brain
                 try
                 {
                     queue.Enqueue(Encoding.UTF8.GetString(client.Receive(ref endpoint)));
+                    MarkerSender.Host = endpoint.Address.ToString();
                 }
                 catch (Exception)
                 {

@@ -7,7 +7,15 @@ namespace Ogrod.Music
 {
     // Format materiału muzycznego: to samo, co ma generować LLM. Nuty zapisane jako stopnie skali
     // (0 = tonika, 7 = oktawa wyżej), więc ten sam zapis gra w dur i w moll.
-    // Warstwa: "stopień@początek:długość ..." (w uderzeniach), motyw: "stopień stopień ...".
+    // Fraza: "stopień@początek:długość ..." (w uderzeniach, opcjonalnie "*głośność"),
+    // motyw: "stopień stopień ...".
+
+    [Serializable]
+    public class PhraseData
+    {
+        public int level;      // poziom rośliny, na którym fraza trafia do puli
+        public string notes;
+    }
 
     [Serializable]
     public class VoiceData
@@ -18,7 +26,7 @@ namespace Ogrod.Music
         public string role;
         public int octave;
         public string motif;
-        public string[] layers;
+        public PhraseData[] phrases;   // dodatkowe frazy (pisane ręcznie albo przez LLM)
     }
 
     [Serializable]
@@ -40,6 +48,7 @@ namespace Ogrod.Music
         public int degree;
         public float beat;
         public float length;
+        public float velocity;   // 0 = domyślna (1)
     }
 
     public static class MusicBank
@@ -59,20 +68,6 @@ namespace Ogrod.Music
             return bank;
         }
 
-        // Najwyższa poprawna warstwa nie wyższa niż żądana; fragment, który nie przeszedł
-        // walidacji, nigdy nie trafia do odtwarzania.
-        public static List<Note> GetLayer(MusicBankData bank, VoiceData voice, int index)
-        {
-            for (int i = Mathf.Min(index, voice.layers.Length - 1); i >= 0; i--)
-            {
-                if (TryParseLayer(voice.layers[i], out var notes, out string error)
-                    && MusicValidator.Validate(notes, bank, out error))
-                    return notes;
-                Debug.LogWarning($"[MusicBank] Odrzucono warstwę {i} głosu '{voice.id}': {error}");
-            }
-            return null;
-        }
-
         public static int[] ParseMotif(string motif)
         {
             var parts = motif.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -85,27 +80,37 @@ namespace Ogrod.Music
         {
             var notes = new List<Note>(degrees.Length);
             for (int i = 0; i < degrees.Length; i++)
-                notes.Add(new Note { degree = degrees[i], beat = i * MotifNoteBeats, length = MotifNoteBeats });
+                notes.Add(new Note { degree = degrees[i], beat = i * MotifNoteBeats, length = MotifNoteBeats, velocity = 1f });
             return notes;
         }
 
-        static bool TryParseLayer(string text, out List<Note> notes, out string error)
+        public static bool TryParsePhrase(string text, out List<Note> notes, out string error)
         {
             notes = new List<Note>();
             error = null;
             foreach (var token in text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                int at = token.IndexOf('@'), colon = token.IndexOf(':');
+                string body = token;
+                float velocity = 1f;
+                int star = token.IndexOf('*');
+                if (star > 0)
+                {
+                    body = token.Substring(0, star);
+                    if (!float.TryParse(token.Substring(star + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out velocity))
+                    { error = $"nieczytelna głośność w '{token}'"; return false; }
+                }
+                int at = body.IndexOf('@'), colon = body.IndexOf(':');
                 if (at <= 0 || colon <= at + 1
-                    || !int.TryParse(token.Substring(0, at), NumberStyles.Integer, CultureInfo.InvariantCulture, out int degree)
-                    || !float.TryParse(token.Substring(at + 1, colon - at - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out float beat)
-                    || !float.TryParse(token.Substring(colon + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out float length))
+                    || !int.TryParse(body.Substring(0, at), NumberStyles.Integer, CultureInfo.InvariantCulture, out int degree)
+                    || !float.TryParse(body.Substring(at + 1, colon - at - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out float beat)
+                    || !float.TryParse(body.Substring(colon + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out float length))
                 {
                     error = $"nieczytelna nuta '{token}'";
                     return false;
                 }
-                notes.Add(new Note { degree = degree, beat = beat, length = length });
+                notes.Add(new Note { degree = degree, beat = beat, length = length, velocity = velocity });
             }
+            notes.Sort((a, b) => a.beat.CompareTo(b.beat));
             return true;
         }
     }
@@ -126,22 +131,24 @@ namespace Ogrod.Music
                 { error = $"nuta poza frazą (początek {n.beat}, długość {n.length})"; return false; }
                 if (n.degree < -7 || n.degree > 14)
                 { error = $"stopień {n.degree} poza zakresem"; return false; }
+                if (n.velocity < 0f || n.velocity > 1.2f)
+                { error = $"głośność {n.velocity} poza zakresem"; return false; }
 
                 int bar = Mathf.Min((int)(n.beat / bank.beatsPerBar), bank.bars - 1);
                 if (++perBar[bar] > bank.maxNotesPerBar)
                 { error = $"za gęsto w takcie {bar + 1}"; return false; }
 
                 bool downbeat = Mathf.Abs(n.beat - bar * bank.beatsPerBar) < 0.001f;
-                if (downbeat && bank.progression != null && bar < bank.progression.Length)
-                {
-                    int interval = Mod7(n.degree - bank.progression[bar]);
-                    if (interval != 0 && interval != 2 && interval != 4)
-                    { error = $"takt {bar + 1}: stopień {n.degree} nie należy do akordu"; return false; }
-                }
+                if (downbeat && bank.progression != null && bar < bank.progression.Length && !IsChordTone(n.degree, bank.progression[bar]))
+                { error = $"takt {bar + 1}: stopień {n.degree} nie należy do akordu"; return false; }
             }
             return true;
         }
 
-        static int Mod7(int v) => ((v % 7) + 7) % 7;
+        public static bool IsChordTone(int degree, int root)
+        {
+            int interval = (((degree - root) % 7) + 7) % 7;
+            return interval == 0 || interval == 2 || interval == 4;
+        }
     }
 }

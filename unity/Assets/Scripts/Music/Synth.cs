@@ -23,16 +23,34 @@ namespace Ogrod.Music
         public static AudioClip Render(string name, IList<Note> notes, string instrument, int octave,
             bool minor, float beatSeconds, float totalBeats, bool loop, float gain = 0.22f)
         {
+            return ToClip(name, RenderBuffer(notes, instrument, octave, minor, beatSeconds, totalBeats, loop, gain, 0));
+        }
+
+        public static AudioClip ToClip(string name, float[] buffer)
+        {
+            var clip = AudioClip.Create(name, buffer.Length, 1, SampleRate, false);
+            clip.SetData(buffer, 0);
+            return clip;
+        }
+
+        // Sama matematyka, bez API Unity poza Mathf, więc można liczyć w wątku roboczym.
+        // humanizeSeed != 0: nuty wchodzą z drobnym, powtarzalnym rozrzutem w czasie.
+        public static float[] RenderBuffer(IList<Note> notes, string instrument, int octave, bool minor,
+            float beatSeconds, float totalBeats, bool loop, float gain, int humanizeSeed)
+        {
             float tail = TailSeconds(instrument);
             int loopSamples = Mathf.RoundToInt(totalBeats * beatSeconds * SampleRate);
             int length = loop ? loopSamples : loopSamples + Mathf.RoundToInt(tail * SampleRate);
             var buffer = new float[length];
+            var rng = humanizeSeed != 0 ? new System.Random(humanizeSeed) : null;
 
             foreach (var note in notes)
             {
                 float freq = Frequency(note.degree, octave, minor);
                 float duration = note.length * beatSeconds;
-                int start = Mathf.RoundToInt(note.beat * beatSeconds * SampleRate);
+                float level = gain * (note.velocity > 0f ? note.velocity : 1f);
+                float offset = rng != null ? ((float)rng.NextDouble() - 0.5f) * 0.024f : 0f;
+                int start = Mathf.Max(0, Mathf.RoundToInt((note.beat * beatSeconds + offset) * SampleRate));
                 int count = Mathf.RoundToInt((duration + tail) * SampleRate);
                 for (int i = 0; i < count; i++)
                 {
@@ -42,13 +60,10 @@ namespace Ogrod.Music
                         if (!loop) break;
                         index %= length;
                     }
-                    buffer[index] += gain * Voice(instrument, freq, i / (float)SampleRate, duration);
+                    buffer[index] += level * Voice(instrument, freq, i / (float)SampleRate, duration);
                 }
             }
-
-            var clip = AudioClip.Create(name, length, 1, SampleRate, false);
-            clip.SetData(buffer, 0);
-            return clip;
+            return buffer;
         }
 
         static float TailSeconds(string instrument)

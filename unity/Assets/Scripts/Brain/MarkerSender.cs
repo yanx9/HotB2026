@@ -12,6 +12,9 @@ namespace Ogrod.Brain
     public static class MarkerSender
     {
         public const int Port = 5006;
+        // adres ustawia UdpBrainReceiver: znaczniki wracają tam, skąd przychodzi sygnał BCI,
+        // więc most może działać na innym komputerze
+        public static volatile string Host = "127.0.0.1";
         static UdpClient client;
         static StreamWriter log;
 
@@ -27,7 +30,7 @@ namespace Ogrod.Brain
                 client ??= new UdpClient();
                 byte[] data = Encoding.UTF8.GetBytes(
                     $"{{\"type\": \"marker\", \"name\": \"{name}\", \"value\": {val}, \"t\": {ts}}}");
-                client.Send(data, data.Length, "127.0.0.1", Port);
+                client.Send(data, data.Length, Host, Port);
 
                 if (log == null)
                 {
@@ -49,6 +52,7 @@ namespace Ogrod.Brain
         {
             log?.Dispose(); log = null;
             client?.Close(); client = null;
+            Host = "127.0.0.1";
         }
     }
 }
