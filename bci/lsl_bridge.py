@@ -4,6 +4,7 @@
     python lsl_bridge.py                           # pierwszy strumień typu EEG, gra na tym komputerze
     python lsl_bridge.py --name UN-2023.xx.xx      # konkretny strumień
     python lsl_bridge.py --game-host 192.168.1.20  # gra na innym komputerze
+    python lsl_bridge.py --profile ../data/calibration/participant.json
 
 Most nie wie nic o grach: wysyła nazwane sygnały, a każda gra sama wybiera, których słucha.
 
@@ -18,7 +19,10 @@ Most nie wie nic o grach: wysyła nazwane sygnały, a każda gra sama wybiera, k
 To heurystyki do sterowania i neurofeedbacku, nie zwalidowane miary. Progi i wzmocnienia
 trzeba dobrać na prawdziwym sygnale.
 
-Znaczniki z gry (UDP 5006) trafiają do strumienia LSL "OgrodMarkers", więc LabRecorder
+Z --profile: eyes_closed, right_hand, left_hand, jaw, laterality i flagi *_valid / *_active.
+Brak gotowej kalibracji nie uruchamia zastępczej heurystyki. focus pozostaje heurystyką.
+
+Znaczniki z gry (UDP 5006) trafiają do strumienia LSL "BciMarkers", więc LabRecorder
 nagra je razem z EEG. Nie uruchamiaj jednocześnie marker_logger.py (ten sam port).
 Format wiadomości: docs/protocol.md.
 """
@@ -30,128 +34,12 @@ import socket
 import sys
 import threading
 import time
-from collections import deque
 
 import numpy as np
 from pylsl import IRREGULAR_RATE, StreamInfo, StreamInlet, StreamOutlet, local_clock, resolve_byprop, resolve_streams
-from scipy.signal import detrend, welch
-
-BANDS = {"theta": (4, 8), "alpha": (8, 13), "beta": (13, 30)}
-WINDOW_S = 2.0
-RATE_HZ = 10
-BASELINE_S = 60
-WARMUP_S = 3
-
-
-class Window:
-    """Ostatnie sekundy sygnału ze wszystkich kanałów."""
-
-    def __init__(self, srate, n_channels, seconds=WINDOW_S):
-        self.srate = srate
-        self.n = int(seconds * srate)
-        self.buffer = np.zeros((self.n, n_channels))
-        self.filled = 0
-
-    def push(self, chunk):
-        if len(chunk) >= self.n:
-            self.buffer = chunk[-self.n:].copy()
-        else:
-            self.buffer = np.roll(self.buffer, -len(chunk), axis=0)
-            self.buffer[-len(chunk):] = chunk
-        self.filled = min(self.n, self.filled + len(chunk))
-
-    # None, dopóki nie zebrało się tyle danych
-    def last(self, seconds, channels):
-        n = int(seconds * self.srate)
-        if self.filled < n:
-            return None
-        return detrend(self.buffer[-n:, channels], axis=0)
-
-
-class FocusMeter:
-    name = "focus"
-
-    def __init__(self, channels, artifact_uv):
-        self.channels = channels
-        self.artifact_uv = artifact_uv
-        self.history = deque(maxlen=BASELINE_S * RATE_HZ)
-        self.value = 0.5
-        self.powers = None
-        self.artifacts = 0
-
-    # None = brak nowej wartości (za mało danych albo artefakt); gra trzyma wtedy poprzednią
-    def compute(self, window):
-        x = window.last(WINDOW_S, self.channels)
-        if x is None:
-            return None
-        if np.ptp(x, axis=0).max() > self.artifact_uv:   # mrugnięcie, ruch, odklejona elektroda
-            self.artifacts += 1
-            return None
-
-        freqs, psd = welch(x, fs=window.srate, nperseg=int(window.srate), axis=0)
-        self.powers = {name: float(psd[(freqs >= lo) & (freqs < hi)].mean()) for name, (lo, hi) in BANDS.items()}
-        index = self.powers["beta"] / (self.powers["alpha"] + self.powers["theta"] + 1e-12)
-        self.history.append(math.log(index + 1e-12))
-        if len(self.history) < WARMUP_S * RATE_HZ:
-            return self.value
-
-        spread = float(np.std(self.history)) or 1e-6
-        z = (self.history[-1] - float(np.mean(self.history))) / spread
-        self.value += 0.3 * (1 / (1 + math.exp(-z)) - self.value)   # wygładzanie, bez migotania
-        return self.value
-
-
-class LateralityMeter:
-    name = "laterality"
-
-    def __init__(self, left, right, artifact_uv):
-        self.channels = [left, right]
-        self.artifact_uv = artifact_uv
-        self.history = deque(maxlen=BASELINE_S * RATE_HZ)
-        self.value = 0.0
-
-    def compute(self, window):
-        x = window.last(1.0, self.channels)
-        if x is None or np.ptp(x, axis=0).max() > self.artifact_uv:
-            return None
-        freqs, psd = welch(x, fs=window.srate, nperseg=int(window.srate / 2), axis=0)
-        power = psd[(freqs >= 8) & (freqs <= 30)].mean(axis=0)
-        self.history.append(math.log(power[1] + 1e-12) - math.log(power[0] + 1e-12))
-        if len(self.history) < WARMUP_S * RATE_HZ:
-            return 0.0
-
-        # odchylenie od własnej średniej: 2 odchylenia standardowe = pełne wychylenie
-        spread = float(np.std(self.history)) or 1e-6
-        z = (self.history[-1] - float(np.mean(self.history))) / spread
-        self.value += 0.3 * (min(1.0, max(-1.0, z / 2)) - self.value)
-        return self.value
-
-
-class JawMeter:
-    name = "jaw"
-
-    def __init__(self, channels, band):
-        self.channels = channels
-        self.band = band
-        self.history = deque(maxlen=BASELINE_S * RATE_HZ)
-        self.value = 0.0
-
-    # bez odrzucania artefaktów: zaciśnięcie szczęki samo jest artefaktem
-    def compute(self, window):
-        x = window.last(0.25, self.channels)
-        if x is None:
-            return None
-        spectrum = np.abs(np.fft.rfft(x * np.hanning(len(x))[:, None], axis=0)) ** 2
-        freqs = np.fft.rfftfreq(len(x), 1 / window.srate)
-        level = math.log10(float(spectrum[(freqs >= self.band[0]) & (freqs <= self.band[1])].mean()) + 1e-12)
-        self.history.append(level)
-        if len(self.history) < WARMUP_S * RATE_HZ:
-            return 0.0
-
-        # spoczynek = dolne 20% ostatniej minuty; 3x więcej mocy to początek skali, 30x to pełna
-        rest = float(np.percentile(self.history, 20))
-        self.value = min(1.0, max(0.0, level - rest - 0.5))
-        return self.value
+from processing import FocusMeter, JawMeter, LateralityMeter, Window, RATE_HZ
+from lsl_source import LSLSource, assert_profile_source
+from profiles import ProfileEngine, load_profile
 
 
 def channel_labels(info):
@@ -187,20 +75,25 @@ def find_stream(name, stream_type, timeout):
     return found[0]
 
 
-def send(sock, addr, name, value):
-    msg = {"type": "metric", "name": name, "value": round(value, 3), "t": time.time()}
-    sock.sendto(json.dumps(msg).encode("utf-8"), addr)
+def send(sock, addr, name, value, kind="metric"):
+    if not math.isfinite(value):
+        return
+    msg = {"type": kind, "name": name, "value": round(value, 3), "t": time.time()}
+    sock.sendto(json.dumps(msg, allow_nan=False).encode("utf-8"), addr)
 
 
-def run_markers(port, outlet):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
+def run_markers(sock, outlet):
     warned = False
     while True:
-        data, _ = sock.recvfrom(4096)
+        try:
+            data, _ = sock.recvfrom(4096)
+        except OSError:
+            return
         try:
             msg = json.loads(data)
             name, value, t = msg["name"], float(msg.get("value", 0)), float(msg["t"])
+            if msg.get("type") != "marker" or not isinstance(name, str) or not all(map(math.isfinite, (value, t))):
+                continue
         except (ValueError, KeyError, TypeError):
             continue
         # czas zdarzenia w grze przeliczony na zegar LSL; gdy gra działa na innym komputerze,
@@ -212,6 +105,101 @@ def run_markers(port, outlet):
                 warned = True
             age = 0.0
         outlet.push_sample([f"{name}:{value:g}"], local_clock() - age)
+
+
+def start_markers(args):
+    if args.no_markers:
+        return None
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", args.marker_port))
+        info = StreamInfo(args.marker_name, "Markers", 1, IRREGULAR_RATE, "string", "bci-markers")
+        outlet = StreamOutlet(info)
+    except Exception:
+        sock.close()
+        raise
+    threading.Thread(target=run_markers, args=(sock, outlet), daemon=True).start()
+    print(f"Znaczniki: UDP {args.marker_port} -> LSL {args.marker_name!r}")
+    return sock
+
+
+def run_calibrated(args):
+    profile = load_profile(args.profile)
+    engine = ProfileEngine(profile)
+    config = engine.config
+    source = LSLSource(args.name, args.type,
+                       units=args.units or profile["stream"].get("units_option", "auto"),
+                       assume_unicorn_order=args.assume_unicorn_order or profile["stream"].get("assumed_unicorn_order", False),
+                       artifact_uv=config.artifact_uv, jaw_band=config.jaw_band)
+    marker_socket = None
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        assert_profile_source(profile, source, allow_simulated=args.allow_simulated)
+        marker_socket = start_markers(args)
+        targets = [(args.game_host, args.game_port)]
+        for destination in args.target:
+            host, port = destination.rsplit(":", 1)
+            target = (host, int(port))
+            if not 1 <= target[1] <= 65535:
+                raise ValueError("Port odbiorcy poza zakresem.")
+            if target not in targets:
+                targets.append(target)
+        print(f"Profil: {profile['subject']} · {args.profile}")
+        print(f"Gotowe detektory: {', '.join(engine.detectors) or 'BRAK — wykonaj kalibrację'}")
+        print(f"EEG: {source.stream['name']} · {config.sampling_rate:g} Hz -> {targets}")
+        print("focus = nieskalibrowana heurystyka. Wyniki 0–1 nie są prawdopodobieństwami.")
+        window = Window(config.sampling_rate, config.channel_count)
+        focus = FocusMeter(config.eeg_channels[:5], config.artifact_uv)
+        next_tick = next_report = time.monotonic()
+        commands_at = {"right_hand": 0.0, "left_hand": 0.0}
+        while True:
+            samples, timestamps = source.read()
+            now = time.monotonic()
+            if source.gap:
+                window.clear()
+                for detector in engine.detectors.values():
+                    detector.reset()
+            if len(timestamps):
+                window.push(samples)
+            fresh = source.fresh()
+            if not fresh:
+                window.clear()
+            if now >= next_tick:
+                next_tick = now + 1 / RATE_HZ
+                results = engine.update(window, now, fresh=fresh)
+                for name, item in results.items():
+                    for target in targets:
+                        send(sock, target, name, item["value"])
+                        send(sock, target, name + "_valid", float(item["valid"]))
+                        if name != "laterality":
+                            send(sock, target, name + "_active", float(item["active"]))
+                x = window.last(2.0, config.eeg_channels[:5])
+                focus_valid = (fresh and x is not None and np.isfinite(x).all()
+                               and np.all(np.ptp(x, axis=0) > 0.01) and not results["jaw"]["active"])
+                value = focus.compute(window) if focus_valid else None
+                for target in targets:
+                    send(sock, target, "focus", value if value is not None else 0.0)
+                    send(sock, target, "focus_valid", float(value is not None))
+                # Legacy semantic direction commands keep existing Unity receivers compatible.
+                # No mapping to select/cut/steer or other game actions lives in the bridge.
+                if not args.no_commands:
+                    for name, command in (("right_hand", "right"), ("left_hand", "left")):
+                        if results[name]["active"] and now >= commands_at[name]:
+                            for target in targets:
+                                send(sock, target, command, results[name]["value"], "command")
+                            commands_at[name] = now + 0.5
+            if now >= next_report:
+                next_report = now + 1
+                print("  ".join(f"{name}={item['value']:.2f}{'*' if item['active'] else ''}"
+                                f"{' (brak)' if not item['valid'] else ''}" for name, item in results.items()))
+            time.sleep(0.005)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        source.close()
+        sock.close()
+        if marker_socket:
+            marker_socket.close()
 
 
 def main():
@@ -228,15 +216,32 @@ def main():
                         help="pasmo mięśniowe w Hz (domyślnie 55,95; jeśli strumień jest filtrowany do 50 Hz, np. 30,45)")
     parser.add_argument("--artifact-uv", type=float, default=200.0,
                         help="próg międzyszczytowy w µV, powyżej okno jest pomijane")
-    parser.add_argument("--game-host", default="127.0.0.1")
-    parser.add_argument("--game-port", type=int, default=5005)
+    parser.add_argument("--game-host", "--host", default="127.0.0.1")
+    parser.add_argument("--game-port", "--port", type=int, default=5005)
+    parser.add_argument("--profile", help="profil JSON z calibrate.py; montaż i cechy są wczytywane z profilu")
+    parser.add_argument("--units", choices=("auto", "uv", "v"), help="jednostki LSL w trybie --profile")
+    parser.add_argument("--assume-unicorn-order", action="store_true", help="potwierdź standardowy montaż przy braku etykiet LSL")
+    parser.add_argument("--allow-simulated", action="store_true", help="pozwól na profil DEMO wyłącznie z fake-* LSL")
+    parser.add_argument("--target", action="append", default=[], help="dodatkowy odbiorca HOST:PORT (z --profile)")
+    parser.add_argument("--no-commands", action="store_true", help="tylko metryki; bez komend left/right z profilu")
     parser.add_argument("--marker-port", type=int, default=5006)
     parser.add_argument("--no-markers", action="store_true", help="nie publikuj znaczników z gry w LSL")
+    parser.add_argument("--marker-name", default="BciMarkers", help="nazwa strumienia znaczników, np. OgrodMarkers dla starych nagrań")
     args = parser.parse_args()
 
     if args.list:
         list_streams()
         return
+
+    if args.profile:
+        try:
+            run_calibrated(args)
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+            sys.exit(f"Nie można uruchomić profilu: {exc}")
+        return
+    if args.target or args.units or args.assume_unicorn_order or args.allow_simulated:
+        parser.error("--target, --units, --assume-unicorn-order i --allow-simulated wymagają --profile")
+    print("Tryb bez profilu: nieskalibrowane heurystyki. Kalibracja: python bci/calibrate.py")
 
     info = find_stream(args.name, args.type, timeout=10)
     inlet = StreamInlet(info, max_buflen=10)
@@ -258,11 +263,7 @@ def main():
     print(f"laterality: {labels[args.c4]} minus {labels[args.c3]}")
     print(f"jaw: {jaw_band[0]:g}-{jaw_band[1]:g} Hz z kanałów: {', '.join(labels[c] for c in jaw_channels)}")
 
-    if not args.no_markers:
-        marker_info = StreamInfo("OgrodMarkers", "Markers", 1, IRREGULAR_RATE, "string", "ogrod-markers")
-        outlet = StreamOutlet(marker_info)
-        threading.Thread(target=run_markers, args=(args.marker_port, outlet), daemon=True).start()
-        print(f"Znaczniki: UDP {args.marker_port} -> LSL 'OgrodMarkers'")
+    marker_socket = start_markers(args)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     game = (args.game_host, args.game_port)
@@ -299,6 +300,11 @@ def main():
             time.sleep(0.01)
     except KeyboardInterrupt:
         pass
+    finally:
+        inlet.close_stream()
+        sock.close()
+        if marker_socket:
+            marker_socket.close()
 
 
 if __name__ == "__main__":

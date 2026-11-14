@@ -23,6 +23,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name", default="FakeUnicorn")
     parser.add_argument("--period", type=float, default=30.0, help="okres zmian skupienia w sekundach")
+    parser.add_argument("--calibration-cycle", action="store_true",
+                        help="sygnały zgodne z DEMO kalibratora: spoczynek / oczy / prawa / lewa / szczęka")
     args = parser.parse_args()
 
     info = StreamInfo(args.name, "EEG", len(CHANNELS), SRATE, "float32", "fake-unicorn")
@@ -35,6 +37,8 @@ def main():
     outlet = StreamOutlet(info, chunk_size=CHUNK)
 
     rng = np.random.default_rng()
+    from calibration_session import DemoSource
+    demo = DemoSource()
     start, sent = local_clock(), 0
     print(f"Nadaję {args.name!r}: {len(CHANNELS)} kanałów, {SRATE} Hz (Ctrl+C kończy)")
     try:
@@ -42,6 +46,13 @@ def main():
             # nadrabiamy tyle próbek, ile powinno upłynąć od startu
             while sent + CHUNK <= (local_clock() - start) * SRATE:
                 t = (sent + np.arange(CHUNK)) / SRATE
+                if args.calibration_cycle:
+                    states = ("rest", "eyes_closed", "rest", "right_hand", "rest", "left_hand", "rest", "jaw")
+                    state = states[int(t[0] // 4) % len(states)]
+                    samples = demo.samples(t, state)
+                    outlet.push_chunk(samples.tolist(), start + (sent + CHUNK - 1) / SRATE)
+                    sent += CHUNK
+                    continue
                 focus = 0.5 + 0.5 * np.sin(2 * np.pi * t / args.period)
                 wave = (6 * np.sin(2 * np.pi * 6 * t)                          # theta, stała
                         + (1.5 - focus) * 10 * np.sin(2 * np.pi * 10 * t)      # alfa słabnie przy skupieniu
