@@ -1,6 +1,6 @@
 # Protokół
 
-Kontrakt między częścią pythonową (`bci/`) a aplikacją (`unity/`). Zmieniając format, zmieniajcie ten plik w tym samym commicie co kod po obu stronach.
+Kontrakt między częścią pythonową (`bci/`) a dowolną grą Unity (`unity/`, `precel/` i kolejnymi). Zmieniając format, zmieniajcie ten plik w tym samym commicie co kod po obu stronach. Kalibracja i profile: [calibration.md](calibration.md).
 
 ```
 Unicorn Hybrid Black ──Bluetooth──▶ Unicorn Suite ──LSL──▶ bci/lsl_bridge.py ──UDP, JSON──▶ Unity
@@ -30,7 +30,7 @@ Most (`bci/lsl_bridge.py`) może działać na innym komputerze niż gra, np. na 
 |---|---|---|
 | `type` | string | `"command"` albo `"metric"` |
 | `name` | string | nazwa komendy lub metryki (listy niżej) |
-| `value` | float | `command`: pewność klasyfikacji 0–1; `metric`: wartość 0–1 |
+| `value` | float | `command`: wynik detektora 0–1 (niekoniecznie prawdopodobieństwo); `metric`: zakres zależy od nazwy, np. `laterality` −1–1 |
 | `t` | float | czas wysłania w sekundach Unix, do mierzenia opóźnień. W C# deklarujcie jako `double` — `float` zgubi precyzję |
 
 ```json
@@ -61,12 +61,31 @@ Most nie wie nic o grach: wysyła wszystkie sygnały, a każda gra wybiera, któ
 | `laterality` | −1–1 | różnica mocy 8–30 Hz między C4 a C3 z okna 1 s, względem ostatniej minuty. Ruch albo wyobrażenie ruchu prawej ręki tłumi rytm nad C3, więc wartość rośnie; lewej ręki maleje. Okna z artefaktami są pomijane |
 | `jaw` | 0–1 | zaciśnięcie szczęki: moc 55–95 Hz (mięśnie) ze wszystkich kanałów EEG z okna 0,25 s, względem spoczynku. 0 = do 3× mocy spoczynkowej, 1 = 30× i więcej |
 
+### Sygnały z profilu kalibracji
+
+`lsl_bridge.py --profile <plik.json>` używa parametrów z czterech niezależnych widoków `calibrate.py`. Ten sam profil działa z każdym odbiornikiem; nie zawiera czynności ani nazw gier.
+
+| `name` | Zakres | Znaczenie |
+|---|---|---|
+| `eyes_closed` | 0–1 | wynik reaktywności alfa z tylnych kanałów |
+| `right_hand`, `left_hand` | 0–1 | wynik kalibrowanego kontrastu sensomotorycznego względem spoczynku |
+| `jaw` | 0–1 | kalibrowany wynik aktywności mięśniowej |
+| `<sygnał>_active` | 0/1 | aktywacja po histerezie i czasie potwierdzenia, dla powyższych czterech sygnałów |
+| `<sygnał>_valid` | 0/1 | poprawny model i świeże okno bez wykrytych problemów |
+| `laterality` | −1–1 | `right_hand - left_hand`, tylko gdy oba modele są gotowe i wyniki nie są sprzeczne |
+| `laterality_valid`, `focus_valid` | 0/1 | ważność osi / dotychczasowej heurystyki focus |
+
+Format datagramu nie zmienia się. Brak modelu, nieudana kalibracja i nieprawidłowe dane dają zero oraz `valid=0`. `focus` nie jest kalibrowany przez te widoki. Komendy `left` i `right` są emitowane co 0,5 s podczas aktywnego stanu, chyba że podano `--no-commands`. Kalibrator nie generuje `select`/P300. Cechy i parametry opisuje [calibration.md](calibration.md).
+
 ### Kto czego słucha
 
 | Gra | Sygnały |
 |---|---|
 | Ogród dźwięków (`unity/`) | komendy `select`, `left`, `right`; metryka `focus` |
-| Krojenie precla (`precel/`) | `laterality` przesuwa nóż, `jaw` tnie. Powiązania są w `precel/Assets/Resources/signals.json` i można je przepiąć na dowolny inny sygnał bez zmian w kodzie |
+| Krojenie precla (`precel/`) | `laterality` przesuwa nóż, `jaw_active` tnie (bez profilu kalibracji zastępczo `jaw`). Powiązania są w `precel/Assets/Resources/signals.json` |
+| Mrok (`mrok/`) | `eyes_closed_active` z profilu kalibracji: zamknięte oczy ładują skan. Powiązanie jest w `mrok/Assets/Resources/signals.json` |
+
+Gry z pakietem `shared/bci-signals` przyjmują każdy sygnał o dowolnej nazwie i respektują flagi `<sygnał>_valid`: sygnał z `valid=0` liczy się jak brak sygnału. Kilka gier naraz obsługuje `--target host:port` w moście (każda gra na własnym porcie z `signals.json`).
 
 ## 3. Znaczniki: Unity → `bci/`
 
@@ -74,7 +93,7 @@ Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do cięcia EEG n
 
 - **Transport:** UDP na port `5006` komputera, z którego przychodzi sygnał BCI (dopóki nic nie przyszło: `127.0.0.1`). Ten sam format JSON, `type` = `"marker"`.
 - **Odbiór, jedno z dwóch** (oba słuchają na tym samym porcie):
-  - `python bci/lsl_bridge.py` publikuje je jako strumień LSL `OgrodMarkers` (typ `Markers`, jeden kanał tekstowy `"<name>:<value>"`, np. `"target:2"`). LabRecorder nagra go razem z EEG ze wspólnym zegarem.
+  - `python bci/lsl_bridge.py` publikuje je jako strumień LSL `BciMarkers` (typ `Markers`, jeden kanał tekstowy `"<name>:<value>"`, np. `"target:2"`). LabRecorder nagra go razem z EEG ze wspólnym zegarem. `--marker-name OgrodMarkers` zachowuje dawną nazwę. Kalibrator publikuje osobno `BciCalibrationMarkers` (`calibration/<sygnał>/<faza>:<próba>`).
   - `python bci/marker_logger.py` zapisuje je do `data/raw/markers_<data>.csv`, gdy nie używacie LSL.
 - Gra zapisuje też własną kopię CSV w `Application.persistentDataPath`.
 - `value` to numer rośliny (0–3), a dla `grow` nowy poziom rośliny.
@@ -103,3 +122,15 @@ Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w któr
 | `cut` | pozycja noża | precel przecięty |
 | `result` | różnica masy połówek w % | połówki zważone |
 | `summary` | suma punktów | koniec zawodów |
+
+### Znaczniki gry Mrok
+
+| `name` | `value` | Kiedy |
+|---|---|---|
+| `session_start` | 0 | start gry i każdy restart |
+| `eyes_closed` | 0 | gra uznała oczy za zamknięte |
+| `eyes_open` | czas zamknięcia w s | gra uznała oczy za otwarte |
+| `scan` | zasięg skanu w m | skan po otwarciu oczu |
+| `alert` | numer strażnika | strażnik usłyszał hałas |
+| `loot` | liczba zebranych | gracz zabrał łup |
+| `caught` / `win` | 0 | koniec gry |

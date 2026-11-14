@@ -1,0 +1,8 @@
+{
+    "name": "Bci.Signals",
+    "rootNamespace": "Bci.Signals",
+    "references": [
+        "Unity.InputSystem"
+    ],
+    "autoReferenced": true
+}

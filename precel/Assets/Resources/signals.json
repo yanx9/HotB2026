@@ -15,7 +15,8 @@
     },
     {
       "action": "cut",
-      "signal": "jaw",
+      "signal": "jaw_active",
+      "fallback": "jaw",
       "center": 0.0,
       "gain": 1.0,
       "deadzone": 0.0,

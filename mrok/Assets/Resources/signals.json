@@ -1,0 +1,17 @@
+{
+  "port": 5005,
+  "markerPort": 5006,
+  "bindings": [
+    {
+      "action": "eyes",
+      "signal": "eyes_closed_active",
+      "center": 0.0,
+      "gain": 1.0,
+      "deadzone": 0.0,
+      "invert": false,
+      "smoothing": 0.05,
+      "threshold": 0.5,
+      "key": "space"
+    }
+  ]
+}

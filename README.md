@@ -70,11 +70,40 @@ Osobny projekt Unity (3D, URP). Namiot piwny, deska, precel i nóż. Ruch ręki 
 | ← / → (albo A / D) | `laterality` | nóż w lewo i w prawo |
 | Spacja (trzymaj ok. 0,8 s) | `jaw` | cięcie; puszczona wcześniej cofa nóż |
 
-**Sygnały:** gra nie zna EEG. `SignalHub` to tablica nazwanych sygnałów (nazwa, liczba, źródło), do której piszą `UdpSignalSource` (most LSL) i `KeyboardSignalSource`. `Resources/signals.json` wiąże czynności gry (`steer`, `cut`) z nazwami sygnałów i ustawia wzmocnienie, martwą strefę, wygładzanie i próg. Panel w rogu ekranu pokazuje wszystkie docierające sygnały na żywo.
+**Sygnały:** gra nie zna EEG. Korzysta ze wspólnej warstwy `shared/bci-signals` (opis niżej); `Resources/signals.json` wiąże czynności `steer` i `cut` z sygnałami `laterality` i `jaw_active` (zastępczo `jaw`, gdy most działa bez profilu kalibracji). Panel w rogu ekranu pokazuje wszystkie docierające sygnały na żywo.
 
 **Masa:** precel to zamknięta siatka (rura o zmiennej grubości po krzywej). `MeshSlicer` tnie ją płaszczyzną noża, zamyka przekroje denkami i liczy objętość każdej części z sumy czworościanów ze znakiem. Masa to objętość razy gęstość, więc nie zależy od liczby trójkątów. Każdy precel ma inny kształt, grubość i obrót, więc połowa masy nie leży w połowie szerokości.
 
 **Pod EEG:** cięcie bierze pozycję noża sprzed 0,4 s, bo zaciśnięcie szczęki zakłóca sygnał sterujący. Nóż ma bezwładność, która wygładza szum.
+
+## Trzecia gra: Mrok (`mrok/`)
+
+Osobny projekt Unity (3D, URP). Skradanka z pierwszej osoby w zupełnej ciemności: nic nie ma wyglądu, widać tylko chmurę punktów zostawioną przez skan. Zamknięte oczy ładują skan; po otwarciu fala punktów odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy były zamknięte (od 4 m po 0,5 s do 28 m po 6 s). Strażnicy na stopklatce zostają tam, gdzie byli, a naprawdę idą dalej. Trzeba zebrać trzy łupy i dojść do zielonych drzwi.
+
+Strażnicy nie widzą, ale słyszą: kroki gracza (skradanie jest dużo cichsze) i sam skan, tym dalej, im większy. Idą w miejsce hałasu, nasłuchują i wracają na patrol. Z zamkniętymi oczami można chodzić. Wtedy orientację daje dźwięk przestrzenny: kroki strażników, dzwonienie łupu i tyknięcia odliczające sekundy ładowania.
+
+**Uruchomienie:** otwórz `mrok/` w Unity 6000.6.9f1 i wciśnij Play w `Assets/Scenes/SampleScene`. Najlepiej w słuchawkach.
+
+| Klawisz | Działanie |
+|---|---|
+| Spacja (trzymaj) | udaje sygnał `eyes_closed_active`; ekran gaśnie jak przy zamkniętych oczach |
+| WASD, Shift | ruch, skradanie |
+| mysz (po kliknięciu w okno) albo Q / E | obrót |
+| R | restart po wpadce (albo zamknięcie oczu na 1,5 s) |
+
+**Sygnał:** gra słucha `eyes_closed_active` z mostu uruchomionego z profilem kalibracji (`lsl_bridge.py --profile ...`, patrz `docs/calibration.md`). Warstwa sygnałów to wspólny pakiet `shared/bci-signals`; powiązanie jest w `mrok/Assets/Resources/signals.json`.
+
+## Wspólna warstwa sygnałów (`shared/bci-signals`)
+
+Lokalny pakiet Unity używany przez `precel/` i `mrok/` (wpis `com.hotb.bci-signals` w `Packages/manifest.json`). Nową grę podłącza się tym samym wpisem i własnym plikiem `Resources/signals.json`.
+
+- `SignalHub`: tablica nazwanych sygnałów (nazwa, liczba, źródło). Gra nie wie, skąd pochodzą.
+- `UdpSignalSource`: wpisuje do tablicy wszystko, co nadaje most (`bci/lsl_bridge.py`), bez listy znanych nazw.
+- `KeyboardSignalSource`: udaje te same sygnały klawiszami.
+- `SignalBindings`: wiąże czynność gry z sygnałem i ustawia wzmocnienie, martwą strefę, wygładzanie i próg. Respektuje flagi `<sygnał>_valid` z mostu z profilem kalibracji: sygnał oznaczony jako nieważny liczy się jak brak sygnału. Pole `fallback` wskazuje sygnał zastępczy.
+- `MarkerSender`: znaczniki zdarzeń gry odsyłane do mostu.
+
+Ogród dźwięków (`unity/`) ma starszą, własną warstwę (`Brain/`) opartą na komendach `select` / `left` / `right`, które most nadal nadaje.
 
 ## Struktura
 
@@ -83,6 +112,8 @@ Osobny projekt Unity (3D, URP). Namiot piwny, deska, precel i nóż. Ruch ręki 
 | `bci/` | Python: odczyt EEG z Unicorna (LSL), przetwarzanie, klasyfikacja, wysyłka do gry |
 | `unity/` | projekt Unity z grą Ogród dźwięków |
 | `precel/` | projekt Unity z grą Mistrzostwa w krojeniu precla na pół |
+| `mrok/` | projekt Unity z grą Mrok |
+| `shared/bci-signals/` | pakiet Unity: warstwa sygnałów wspólna dla gier |
 | `docs/protocol.md` | kontrakt między `bci/` a grą: strumienie LSL, porty, format wiadomości |
 | `data/` | nagrania EEG (`data/raw/` nie trafia do repo) |
 
@@ -110,7 +141,17 @@ python bci/mock_sender.py --interactive  # wpisujesz np. "left" albo "focus 0.8"
 
 ### Most LSL (`bci/lsl_bridge.py`)
 
-Czyta EEG z Unicorna przez LSL, liczy sygnały `focus`, `laterality` i `jaw` i wysyła je do gry, a znaczniki z gry publikuje jako strumień LSL `OgrodMarkers` (do nagrania w LabRecorderze razem z EEG). Szczegóły: `docs/protocol.md`.
+**Kalibracja użytkownika:** `bci/calibrate.py` jest niezależną aplikacją z czterema widokami: oczy zamknięte, wyobrażanie ruchu prawej dłoni, lewej dłoni oraz szczęka (EMG). Zapisuje wspólny dla wszystkich gier profil JSON z parametrami i oceną rozdzielności. Instalacja interfejsu: Python 3.9–3.13 i `pip install -r bci/requirements-calibration.txt`. Pełna instrukcja: [docs/calibration.md](docs/calibration.md).
+
+```sh
+python bci/calibrate.py                         # rzeczywisty Unicorn przez LSL
+python bci/calibrate.py --demo                  # cztery widoki na sygnale syntetycznym
+python bci/lsl_bridge.py --profile data/calibration/participant.json --name NAZWA_LSL
+```
+
+Z profilem most wysyła `eyes_closed`, `right_hand`, `left_hand`, `jaw`, `laterality` oraz flagi ważności i aktywacji. Zachowuje komendy `left`/`right` dla ogrodu. Brakująca lub nieudana kalibracja daje neutralny sygnał, bez zastępowania jej heurystyką. Dotychczasowy `focus` pozostaje nieskalibrowaną heurystyką.
+
+Bez profilu czyta EEG z Unicorna przez LSL, liczy dotychczasowe heurystyki `focus`, `laterality` i `jaw` i wysyła je do gry. Znaczniki publikuje jako strumień LSL `BciMarkers` (do nagrania w LabRecorderze razem z EEG); dawną nazwę przywraca `--marker-name OgrodMarkers`. Szczegóły: `docs/protocol.md`.
 
 ```
 python bci/lsl_bridge.py --list                    # jakie strumienie LSL widać w sieci

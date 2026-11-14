@@ -1,7 +1,7 @@
 using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
-using Precel.Signals;
+using Bci.Signals;
 
 namespace Precel.Game
 {
@@ -73,7 +73,7 @@ namespace Precel.Game
             builder.AppendLine();
             foreach (var binding in bindings.config.bindings)
             {
-                builder.Append(binding.action).Append(" ← ").Append(binding.signal).Append("  ");
+                builder.Append(binding.action).Append(" ← ").Append(binding.source ?? binding.signal).Append("  ");
                 builder.AppendLine(binding.live ? binding.value.ToString("+0.00;-0.00") : "brak sygnału");
             }
             bool bridge = Time.unscaledTime - UdpSignalSource.LastPacketAt < 2f;

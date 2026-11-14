@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 using Precel.Pretzel;
-using Precel.Signals;
+using Bci.Signals;
 
 namespace Precel.Game
 {
