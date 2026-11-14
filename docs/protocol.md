@@ -39,14 +39,38 @@ Unicorn Hybrid Black ──Bluetooth──▶ Unicorn Suite ──LSL──▶ b
 
 ### Komendy
 
-| `name` | Znaczenie |
-|---|---|
-| TODO | |
+| `name` | Paradygmat | Co robi w grze |
+|---|---|---|
+| `select` | P300 (auditory oddball) | "to ten motyw" w trakcie rozpoznawania; w ogrodzie zaczyna kolejną lekcję |
+| `left` | motor imagery, lewa ręka | nastrój chłodny, muzyka przechodzi w moll |
+| `right` | motor imagery, prawa ręka | nastrój ciepły, muzyka durowa i jaśniejsza |
+
+Nastrój utrzymuje się 4 s po ostatniej komendzie `left`/`right`, potem wraca do neutralnego. Klasyfikator może więc wysyłać decyzję co ok. 0,5–1 s, dopóki stan trwa.
 
 ### Metryki
 
 | `name` | Znaczenie |
 |---|---|
-| TODO | |
+| `focus` | skupienie 0–1 z widma EEG; im wyższe, tym więcej świetlików i jaśniejsze rośliny |
 
-Komendy `left`, `right`, `select` i metryka `focus` w atrapie (`bci/mock_sender.py`) to tylko przykład — podmieńcie je na ustalone tutaj.
+## 3. Znaczniki: Unity → `bci/`
+
+Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do cięcia EEG na epoki (kalibracja P300) i do oceny wyników gracza.
+
+- **Transport:** UDP na `127.0.0.1:5006`, ten sam format JSON, `type` = `"marker"`.
+- **Odbiór:** `python bci/marker_logger.py` zapisuje je do `data/raw/markers_<data>.csv`. Gra zapisuje też własną kopię CSV w `Application.persistentDataPath`.
+- `value` to numer rośliny (0–3), a dla `grow` nowy poziom rośliny.
+
+| `name` | Kiedy |
+|---|---|
+| `session_start` | start gry |
+| `learn` | początek lekcji (słuchanie motywu) |
+| `pattern` | odtworzenie motywu wzorcowego |
+| `recognize` | początek fazy rozpoznawania |
+| `target` / `distractor` | początek sekwencji: motyw albo sekwencja myląca |
+| `hit` / `false_alarm` / `miss` | odpowiedź gracza: trafienie, reakcja na złą sekwencję, brak reakcji na motyw |
+| `grow` | roślina urosła |
+| `mute` / `unmute` | gracz wyciszył lub włączył roślinę |
+| `garden` | powrót do ogrodu |
+
+Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w której dźwięk wyszedł z głośnika. Opóźnienie toru audio (rzędu kilkudziesięciu ms) trzeba zmierzyć przed kalibracją P300.

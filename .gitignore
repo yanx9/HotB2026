@@ -26,7 +26,14 @@ venv/
 [Mm]emoryCaptures/
 *.csproj
 *.sln
+*.slnx
 *.suo
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+sysinfo.txt
+.utmp/
 *.user
 *.pidb
 *.booproj
