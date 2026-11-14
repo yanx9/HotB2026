@@ -1,5 +1,13 @@
 {
   "dependencies": {
+    "com.hotb.bci-signals": {
+      "version": "file:../../shared/bci-signals",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.unity.inputsystem": "1.20.1"
+      }
+    },
     "com.unity.burst": {
       "version": "2.0.0",
       "depth": 2,

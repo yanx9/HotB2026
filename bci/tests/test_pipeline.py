@@ -106,6 +106,23 @@ class PipelineTests(unittest.TestCase):
         values, _ = feed(node, "rest", 0.5, DemoSource(), t)
         self.assertEqual(values["eyes_closed_valid"], 0)
 
+    def test_diagnosis_names_the_channel_that_breaks_the_signals(self):
+        node = SignalClassifier(self.profile)
+        node.setup({}, context())
+        demo, out = DemoSource(), None
+        for i in range(250):   # 4 s, PO7 swinging by 600 µV as a loose electrode would
+            t = (i * 4 + np.arange(4)) / 250
+            x = demo.samples(t, "rest")
+            x[:, 5] += 300 * np.sign(np.sin(2 * np.pi * 0.7 * t))
+            out = node.step({PORT_IN: x.astype(np.float32)})[PORT_OUT]
+        values = dict(zip(node.names, out[-1]))
+        self.assertEqual(values["eyes_closed_valid"], 0)
+        text = node.diagnose()
+        self.assertIn("eyes_closed: artefakt amplitudy", text)
+        self.assertRegex(text, r"PO7 \d+!")
+        self.assertNotRegex(text, r"Fz \d+!")
+        self.assertIn("okno 2.0/2 s", text)
+
     def test_sender_emits_protocol_messages_and_commands(self):
         receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         receiver.bind(("127.0.0.1", 0))

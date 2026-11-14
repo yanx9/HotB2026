@@ -65,6 +65,20 @@ def start_markers(port, path):
     return sock
 
 
+def report(classifier, sender, every=2.0):
+    """Co kilka sekund stan klasyfikatora w konsoli, także przy otwartym oknie g.Pype."""
+    count, last = classifier._count, time.monotonic()
+    while True:
+        time.sleep(every)
+        now = time.monotonic()
+        rate = (classifier._count - count) / (now - last)
+        count, last = classifier._count, now
+        values = dict(zip(classifier.names, classifier._values))
+        shown = "  ".join(f"{name}={value:.2f}" for name, value in values.items()
+                          if not name.endswith(("_valid", "_active")))
+        print(f"{shown}  · wysłano {sender.sent}\n  EEG {rate:.0f} Hz · {classifier.diagnose()}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--profile", help="profil JSON z calibrate.py; bez niego działają nieskalibrowane heurystyki")
@@ -142,13 +156,10 @@ def main():
               f"sygnały {', '.join(f'{host}:{port}' for host, port in targets)} (Ctrl+C kończy)")
         pipeline.start()
         if app:
+            threading.Thread(target=report, args=(classifier, sender), daemon=True).start()
             app.run()
         else:
-            while True:
-                time.sleep(1)
-                values = dict(zip(classifier.names, classifier._values))
-                print("  ".join(f"{name}={value:.2f}" for name, value in values.items()
-                                if not name.endswith(("_valid", "_active"))) + f"  · wysłano {sender.sent}")
+            report(classifier, sender)
     except KeyboardInterrupt:
         pass
     except Exception as exc:

@@ -166,6 +166,7 @@ class SignalClassifier(gp.IONode):
         self._scale = 1.0
         self._count = self._next_update = 0
         self._last_frame = None
+        self.resets = 0
 
     def setup(self, data, port_context_in):
         out = super().setup(data, port_context_in)
@@ -179,6 +180,7 @@ class SignalClassifier(gp.IONode):
         return out
 
     def reset(self):
+        self.resets += 1
         self._window.clear()
         if self.engine:
             for detector in self.engine.detectors.values():
@@ -204,6 +206,28 @@ class SignalClassifier(gp.IONode):
         values["focus"] = self.focus.value if value is None else value
         values["focus_valid"] = float(value is not None)
         self._values = np.array([values[name] for name in self.names])
+
+    REASONS = {"warming_up": "za mało danych", "amplitude_artifact": "artefakt amplitudy",
+               "flat_channel": "płaski kanał", "non_finite": "NaN w danych", "jaw_artifact": "zaciśnięta szczęka",
+               "no_band_power": "brak mocy w paśmie"}
+
+    def diagnose(self):
+        """Jedna linia dla operatora: czy okno się wypełnia, rozpiętość kanałów i czemu sygnał jest nieważny."""
+        config, window = self.feature_config, self._window
+        filled = window.filled / config.sampling_rate
+        parts = [f"okno {filled:.1f}/{window.n / config.sampling_rate:.0f} s", f"przerwy {self.resets}"]
+        n = min(window.filled, round(2 * config.sampling_rate))
+        if n:
+            spans = np.ptp(window.buffer[-n:], axis=0)
+            labels = config.channel_labels or [str(i) for i in range(len(spans))]
+            parts.append("µV p-p " + " ".join(f"{label} {span:.0f}{'!' if span > config.artifact_uv else ''}"
+                                               for label, span in zip(labels, spans)))
+        for name, item in self.results.items():
+            if not item["valid"] and item["reason"] in self.REASONS:
+                parts.append(f"{name}: {self.REASONS[item['reason']]}")
+        if self.focus.artifacts:
+            parts.append(f"focus: odrzucone okna {self.focus.artifacts}")
+        return " · ".join(parts)
 
     def step(self, data):
         config = self.feature_config
