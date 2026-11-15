@@ -1,11 +1,11 @@
-# Nagrywanie sesji i ocena detektora oczu (Mrok)
+# Nagrywanie sesji i ocena detektorów (Beyond the Darkness)
 
 Każde uruchomienie kalibratora i potoku gry zapisuje EEG. Gra wysyła prawdziwy stan oczu (spacja), więc po sesji można policzyć, jak często detektor się myli, i porównywać kolejne wersje algorytmu na tych samych nagraniach.
 
 ```text
 Unicorn ─► g.Pype ─┬─ surowe EEG ───────────┐
                    ├─ filtry ─ EEG po filtrach ┤
-                   │      └─ SignalClassifier ─┼─ wyjście detektora ──► UDP 5005 ─► Mrok
+                   │      └─ SignalClassifier ─┼─ wyjście detektora ──► UDP 5005 ─► gra
                    └─ gp.Marker ◄── UDP 5006 ◄─┼──────────────── znaczniki gry (spacja = prawda)
                                                ▼
                          data/raw/<sesja>_<czas>/eeg_*.h5   (jedna oś: próbka N = ta sama chwila)
@@ -36,7 +36,7 @@ Odczyt w Pythonie: `from recording import load_recording; data, events, meta = l
 
 Pliki zapisują się na bieżąco i są czytelne także po nagłym zamknięciu programu. Godzina gry to ok. 230 MB. `data/raw/` nie trafia do Gita.
 
-## Tryby Mroka (F2)
+## Tryby gry (F2)
 
 **Spacja zawsze oznacza prawdę: trzymaj ją, gdy masz zamknięte oczy.** Gra wysyła wtedy znaczniki `truth_closed` i `truth_open`. Tak samo **F trzymaj, gdy zaciskasz szczękę** (`truth_jaw_on` / `truth_jaw_off`). Tryb decyduje tylko o tym, co steruje grą.
 
@@ -69,7 +69,7 @@ python bci/bci_pipeline.py --profile data/calibration/s01.json --session mrok_s0
 
 Jeśli Unity działa na innym komputerze, dodaj `--host <IP komputera z grą>`. Na komputerze z potokiem zapora Windows musi wpuszczać UDP 5006 (znaczniki), a na komputerze z grą UDP 5005. Konsola wypisuje folder nagrania.
 
-**4. Mrok.** W Unity Play. W panelu w prawym dolnym rogu ma być widać `potok BCI: <adres>`.
+**4. Gra.** W Unity Play. W panelu w prawym dolnym rogu ma być widać `potok BCI: <adres>`.
 
 - **Zbieranie danych:** tryb KLAWISZ (F2). Graj normalnie, przytrzymując spację zawsze, gdy zamykasz oczy, i puszczając, gdy otwierasz. Zamykaj oczy także na różny czas (1–8 s), bo detektor ma działać w każdej sytuacji. 5–10 min na sesję.
 - **Sprawdzian:** tryb EEG. Graj oczami, nadal trzymając spację przy zamkniętych oczach.
@@ -130,3 +130,21 @@ W trybie KLAWISZ zaciśnij kilka razy mocno szczękę, za każdym razem w tej sa
 - Kalibracja przed każdym założeniem opaski, nagrania gry z tym samym profilem co kalibracja.
 - Kilka osób i kilka sesji. Do strojenia używajcie części sesji, a wynik podawajcie na pozostałych (innych dniach albo osobach), nigdy na tych, na których stroiliście.
 - Zapisujcie w nazwie sesji osobę i tryb, np. `--session mrok_s02_klawisz`.
+
+## Szybkie detektory: mniejsze opóźnienie z nagrania gry
+
+Zwykły detektor oczu liczy alfę z okna 2 s, więc reaguje po 1,5–2 s. `bci/fast.py` decyduje co ramkę (16 ms) z dwóch rzeczy: skoku potencjału na surowym Fz przy ruchu powiek (widać go po 0,1–0,3 s) i alfy jako potwierdzenia. Szczęka to moc 55–95 Hz z okna 60 ms, mediana po kanałach.
+
+Progi dobiera się na nagraniu gry w trybie KEY, w którym gracz trzyma spację przy zamkniętych oczach i F przy zaciśniętej szczęce:
+
+```sh
+python bci/tune_fast.py data/raw/mrok_s01_<czas>                                             # sam raport
+python bci/tune_fast.py data/raw/mrok_s01_<czas> --profile data/calibration/s01.json --write # zapis do profilu
+python bci/bci_pipeline.py --profile data/calibration/s01.json ...                           # potok używa szybkich
+```
+
+`tune_fast.py` najpierw zestawia klawisze z fizjologią w EEG i odrzuca rozbieżności, żeby nie stroić na pomyłkach gracza: klawisz bez zaciśnięcia w EMG, zaciśnięcie bez klawisza, zaciśnięcie krótsze niż klawisz, spację bez zamknięcia oczu i zdarzenia za krótkie. Lista odrzuconych z powodem trafia do konsoli i do `tune_fast.json`. Potem dobiera progi na pierwszych 60% nagrania, sprawdza je na pozostałych 40% i podaje obok wynik detektorów, które działały na żywo.
+
+Profil z kluczem `fast` włącza w potoku szybkie detektory: klasyfikator dostaje dodatkowo surowe Fz, a zmiana `eyes_closed_active` / `jaw_active` idzie do gry w tej samej ramce, nie co 0,1 s. Bez tego klucza wszystko działa jak dawniej. `evaluate.py --profile` odtwarza szybkie detektory tym samym kodem.
+
+Ograniczenia: progi pochodzą z jednej sesji jednej osoby, a skok na Fz zależy od ułożenia opaski, więc po założeniu jej na nowo warto nagrać kilka minut i nastroić ponownie. Mrugnięcie zamyka „oczy” na ułamek sekundy; gra pomija zamknięcia krótsze niż 0,5 s.

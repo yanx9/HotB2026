@@ -4,6 +4,7 @@
     (space / F) and its own reactions as markers -> evaluate.py scores both signals
 
     python bci/tests/integration_evaluate.py
+    python bci/tests/integration_evaluate.py --fast     # the same with the fast detectors (fast.py) in the profile
 
 Checks that both signals are recorded and scored the same way. Synthetic data only.
 """
@@ -24,6 +25,7 @@ sys.path.insert(0, str(BCI))
 sys.path.insert(0, str(BCI / "tests"))
 
 import evaluate
+from fast import EYES_DEFAULT, JAW_DEFAULT
 from gpype_nodes import PLAN, stream_info
 from processing import FeatureConfig
 from profiles import new_profile, save_profile
@@ -46,6 +48,9 @@ def main():
         # eyes calibrated, jaw not: the pipeline falls back to the uncalibrated clench button
         profile = new_profile("integration", FeatureConfig(), stream_info(fake=True), True)
         profile["calibrations"]["eyes_closed"] = record_simulated("eyes_closed")
+        fast = "--fast" in sys.argv
+        if fast:   # frame-rate detectors; the pipeline then also feeds the classifier the raw Fz channel
+            profile["fast"] = {"eyes": dict(EYES_DEFAULT), "jaw": dict(JAW_DEFAULT)}
         profile_path = Path(tmp) / "profile.json"
         save_profile(profile_path, profile)
 
@@ -132,7 +137,10 @@ def main():
                 assert {"pipeline_s", "game_s", "total_s"} <= set(latency), (key, latency)
                 assert latency["total_s"]["median"] < .5, (key, latency)
             # the truth keys are timed by the wall clock, so half a second of slack on top of the detector
-            assert 0 <= eyes["median_close_latency_s"] < 2.5 and 0 <= jaw["median_close_latency_s"] < 1.0, reports
+            assert -0.6 <= eyes["median_close_latency_s"] < (0.8 if fast else 2.5), reports
+            assert -0.6 <= jaw["median_close_latency_s"] < 1.0, reports
+            if fast:   # the whole point: both edges of an eye closure arrive within a fraction of a second
+                assert eyes["median_open_latency_s"] < 0.8, reports
 
             # replaying from the filtered EEG gives the same answer as the live decisions
             for key, spec in evaluate.SIGNALS.items():
