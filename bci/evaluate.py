@@ -30,18 +30,21 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fast import FastDetectors  # noqa: E402
 from processing import JawButton, UNICORN_LABELS, Window  # noqa: E402
 from profiles import ProfileEngine, load_profile  # noqa: E402
 from recording import load_recording  # noqa: E402
 
 FS = 250
-STEP = 25                 # decyzja co 0,1 s, jak w SignalClassifier
+STEP = 25                 # zwykłe detektory: decyzja co 0,1 s, jak w SignalClassifier
+FRAME = 4                 # ramka potoku: tak często zmieniają się flagi szybkich detektorów
 
 
 class Signal:
     """Co odróżnia sygnały: nazwy znaczników i kolumn, słowa w raporcie i skala czasu zdarzeń."""
 
-    def __init__(self, key, column, truth, game, pipe, on, off, events, key_name, min_s, grace_s, transition_s, extra_game=()):
+    def __init__(self, key, column, truth, game, pipe, on, off, events, key_name, min_s, grace_s, transition_s,
+                 extra_game=(), ignore_s=0.0):
         self.key, self.column = key, column            # eyes / jaw; nazwa sygnału potoku i kalibracji
         self.truth, self.game, self.pipe = truth, game, pipe   # pary (włączenie, wyłączenie)
         self.on, self.off, self.events, self.key_name = on, off, events, key_name
@@ -49,13 +52,14 @@ class Signal:
         self.grace_s = grace_s            # wykryte, jeśli detektor zareaguje do tylu sekund po końcu
         self.transition_s = transition_s  # przy liczeniu zgodności pomijamy tyle po każdej zmianie prawdy
         self.extra_game = extra_game
+        self.ignore_s = ignore_s          # krótszych włączeń gra nie zauważa (mrugnięcia), więc nie liczą się
 
 
 # Zamknięcie oczu trwa sekundy, a alfa narasta powoli; zaciśnięcie szczęki jest krótkie i natychmiastowe.
 SIGNALS = {
     "eyes": Signal("eyes", "eyes_closed", ("truth_closed", "truth_open"), ("eyes_closed", "eyes_open"),
                    ("pipe_eyes_closed", "pipe_eyes_open"), "zamknięte", "otwarte", "zamknięcia", "spacja",
-                   min_s=1.0, grace_s=1.0, transition_s=3.0, extra_game=("scan",)),
+                   min_s=1.0, grace_s=1.0, transition_s=3.0, extra_game=("scan",), ignore_s=0.5),
     "jaw": Signal("jaw", "jaw", ("truth_jaw_on", "truth_jaw_off"), ("sprint_on", "sprint_off"),
                   ("pipe_jaw_on", "pipe_jaw_off"), "zaciśnięta", "luźna", "zaciśnięcia", "F",
                   min_s=0.5, grace_s=0.5, transition_s=1.0),
@@ -88,11 +92,22 @@ def live_decisions(data, signal):
     active, valid = f"out_{signal.column}_active", f"out_{signal.column}_valid"
     if active not in data:
         raise SystemExit(f"Nagranie nie ma wyjścia detektora {signal.column} (potok bez profilu?). Podaj --profile.")
-    idx = np.arange(STEP - 1, len(data["marker"]), STEP)
+    idx = np.arange(FRAME - 1, len(data["marker"]), FRAME)
     return idx, data[active][idx] >= 0.5, data[valid][idx] >= 0.5
 
 
 def replay_decisions(data, profile, signal):
+    tuned = (profile.get("fast") or {})
+    if signal.key in tuned:   # szybki detektor z profilu: ten sam kod co w potoku, ramka po ramce
+        fast = FastDetectors(profile["feature_config"]["posterior_channels"], {signal.key: tuned[signal.key]})
+        x, raw_fz = np.column_stack([data[f"flt_{c}"] for c in UNICORN_LABELS]), data["raw_Fz"]
+        idx, active, valid = [], [], []
+        for end in range(FRAME, len(x) + 1, FRAME):
+            eyes, jaw, warm = fast.push(x[end - FRAME:end], raw_fz[end - FRAME:end])
+            idx.append(end - 1)
+            active.append(eyes if signal.key == "eyes" else jaw)
+            valid.append(warm)
+        return np.array(idx), np.array(active), np.array(valid)
     engine = ProfileEngine(profile)
     button = None
     if signal.column not in engine.detectors:
@@ -115,9 +130,22 @@ def replay_decisions(data, profile, signal):
     return np.array(idx), np.array(active), np.array(valid)
 
 
+def drop_short(idx, active, seconds):
+    """Włączenia krótsze niż seconds znikają: tak widzi je gra."""
+    if seconds <= 0 or not len(idx):
+        return active
+    active = active.copy()
+    edges = np.flatnonzero(np.diff(np.r_[0, active.astype(int), 0]))
+    for a, b in zip(edges[::2], edges[1::2]):
+        if (idx[min(b, len(idx) - 1)] - idx[a]) < seconds * FS:
+            active[a:b] = False
+    return active
+
+
 def evaluate(idx, active, valid, intervals, signal, start_sample=0):
     keep = idx >= start_sample
     idx, active, valid = idx[keep], active[keep], valid[keep]
+    STEP = int(np.median(np.diff(idx)))   # odstęp decyzji w próbkach
     truth = np.zeros(len(idx), bool)
     for a, b in intervals:
         truth |= (idx >= a) & (idx < b)
@@ -138,8 +166,8 @@ def evaluate(idx, active, valid, intervals, signal, start_sample=0):
     # fałszywe włączenie: detektor włącza się poza [początek, koniec + grace_s] prawdziwego zdarzenia
     onsets = idx[np.flatnonzero(np.diff(np.r_[False, active].astype(int)) == 1)]
     allowed = np.zeros(len(idx), bool)
-    for a, b in intervals:
-        allowed |= (idx >= a) & (idx < b + signal.grace_s * FS)
+    for a, b in intervals:   # pół sekundy przed klawiszem też: detektor bywa szybszy niż palec
+        allowed |= (idx >= a - 0.5 * FS) & (idx < b + signal.grace_s * FS)
     false_onsets = [int(s) for s in onsets if not allowed[np.searchsorted(idx, s)]]
     open_minutes = max((~truth).sum() * STEP / FS / 60, 1e-9)
 
@@ -167,6 +195,7 @@ def describe(idx, active, valid, events, signal, start_sample=0):
     """Sesja bez prawdy (bez klawisza): co detektor robił i jak zareagowała gra."""
     keep = idx >= start_sample
     idx, active, valid = idx[keep], active[keep], valid[keep]
+    STEP = int(np.median(np.diff(idx)))
     edges = np.diff(np.r_[False, active, False].astype(int))
     starts, ends = idx[np.flatnonzero(edges[:-1] == 1)], np.flatnonzero(edges == -1)
     ends = [idx[min(e, len(idx) - 1)] for e in ends]
@@ -274,8 +303,8 @@ def run(folder, data, events, signal, profile_path=None):
     except SystemExit as error:
         print(f"{folder.name} · {signal.key}: pominięte. {error}")
         return False
-    starts = [e["sample"] for e in events if e["name"] == "session_start" and e["sample"] is not None]
-    start = starts[0] if starts else 0
+    active = drop_short(idx, active, signal.ignore_s)
+    start = 0   # całe nagranie: gra bywa włączona przed potokiem i jej session_start wtedy nie ma
     json_path, png_path = folder / f"eval_{signal.key}.json", folder / f"eval_{signal.key}.png"
     head = f"{folder.name} · {signal.key}"
     if source is None:   # bez klawisza prawdy: nie ma czym sprawdzić trafności, tylko opis

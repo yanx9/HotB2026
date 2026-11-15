@@ -114,6 +114,15 @@ namespace Mrok.Game
         public IReadOnlyList<Guard> Guards => guards;
         public float LastRadius { get; private set; }
 
+        // Projekt wchodzi w Play bez przeładowania domeny, więc pola statyczne przeżywają zatrzymanie
+        // gry. Bez tego Play zaczynałby się w poziomie, w którym skończyła się poprzednia rozgrywka.
+        // Tryb KEY / EEG i napisy diagnostyczne celowo zostają takie, jak ustawił je prowadzący.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void StartAtTheDoors()
+        {
+            levelIndex = Levels.Hub;
+        }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
         {

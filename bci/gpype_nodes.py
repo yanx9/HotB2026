@@ -19,6 +19,7 @@ import numpy as np
 from gpype.common._private import channels as channel_info
 
 from calibration_session import DemoSource
+from fast import FastDetectors
 from processing import (FeatureConfig, FocusMeter, JawButton, LateralityMeter, RATE_HZ, SIGNALS,
                         UNICORN_LABELS, Window)
 from profiles import ProfileEngine
@@ -61,6 +62,7 @@ class SyntheticUnicorn(gp.Generator):
         self._mains_hz = mains_hz
         self._demo = DemoSource()
         self._sent = 0
+        self._lid = 0.0
 
     def current_state(self):
         if self.state is not None:
@@ -80,6 +82,12 @@ class SyntheticUnicorn(gp.Generator):
         t = (self._sent + np.arange(len(frame))) / 250
         x = self._demo.samples(t, self.current_state())
         x += (8 * np.sin(2 * np.pi * self._mains_hz * t) + 25 * np.sin(2 * np.pi * 0.1 * t))[:, None]
+        # zamknięte powieki przesuwają potencjał na Fz; tylko dzięki temu szybki detektor oczu
+        # ma w danych syntetycznych co wykrywać (narastanie 0,1 s, jak w prawdziwych nagraniach)
+        lid = 1.0 if self.current_state() == "eyes_closed" else 0.0
+        for i in range(len(frame)):
+            self._lid += (lid - self._lid) * 0.05
+            x[i, 0] += 70.0 * self._lid
         frame[:, :8] = x   # ostatnia kolumna to znacznik czasu g.Pype, zostaje
         self._sent += len(frame)
         return out
@@ -96,6 +104,15 @@ def build_front(pipeline, fake=False, serial=None, mains_hz=50, state=None):
     pipeline.connect(source, highpass)
     pipeline.connect(highpass, notch)
     return source, notch
+
+
+def with_raw_fz(pipeline, source, filtered):
+    """Węzeł: 8 kanałów po filtrach i dziewiąty, surowe Fz. Szybki detektor oczu potrzebuje
+    powolnego skoku potencjału przy ruchu powiek, który filtr 1 Hz usuwa."""
+    router = gp.Router(input_channels=[list(range(len(UNICORN_LABELS))), [0]])
+    pipeline.connect(filtered, router["in1"])
+    pipeline.connect(source, router["in2"])
+    return router
 
 
 def eeg_scale(context, config):
@@ -154,6 +171,11 @@ class SignalClassifier(gp.IONode):
         self.engine = ProfileEngine(profile) if profile else None
         self.feature_config = self.engine.config if self.engine else FeatureConfig()
         config = self.feature_config
+        # Szybkie detektory (fast.py), jeśli profil ma progi z tune_fast.py: decyzja co ramkę
+        # nadpisuje flagi _active / _valid oczu i szczęki. Wejście musi mieć surowe Fz (with_raw_fz).
+        tuned = (profile or {}).get("fast") or {}
+        self.fast = FastDetectors(config.posterior_channels, tuned) if "eyes" in tuned or "jaw" in tuned else None
+        self._fast_flags = {}
         self.focus = FocusMeter(config.eeg_channels[:5], config.artifact_uv)
         if self.engine:
             self.names = [name + suffix for name in SIGNALS for suffix in ("", "_active", "_valid")]
@@ -187,6 +209,8 @@ class SignalClassifier(gp.IONode):
     def reset(self):
         self.resets += 1
         self._window.clear()
+        if self.fast:
+            self.fast.reset()
         if self.engine:
             for detector in self.engine.detectors.values():
                 detector.reset()
@@ -246,9 +270,16 @@ class SignalClassifier(gp.IONode):
         self._last_frame = arrived
         self._window.push(frame)
         self._count += len(frame)
+        if self.fast:
+            eyes, jaw, warm = self.fast.push(frame, data[PORT_IN][:, config.channel_count].astype(float) * self._scale)
+            for name, state in (("eyes_closed", eyes), ("jaw", jaw)):
+                if state is not None:
+                    self._fast_flags[name + "_active"], self._fast_flags[name + "_valid"] = float(state), float(warm)
         if self._count >= self._next_update:
             self._next_update += round(config.sampling_rate / RATE_HZ)
             self.update(self._count / config.sampling_rate)
+        for name, value in self._fast_flags.items():
+            self._values[self.names.index(name)] = value
         return {PORT_OUT: np.tile(self._values, (len(frame), 1)).astype(gp.Constants.DATA_TYPE)}
 
 
@@ -274,6 +305,8 @@ class UdpJsonSender(gp.Sink):
         # kanał 0/1 -> funkcja(stan), wołana w chwili wysłania zmiany do gry (pomiar opóźnień)
         self.on_change = {}
         self._last_state = {}
+        # kanały 0/1, których zmiana idzie do gry od razu, w tej samej ramce, nie co 0,1 s
+        self.immediate = []
 
     def setup(self, data, port_context_in):
         context = port_context_in[PORT_IN]
@@ -307,7 +340,19 @@ class UdpJsonSender(gp.Sink):
     def step(self, data):
         frame = data[PORT_IN]
         self._count += len(frame)
-        if self._socket is None or self._count < self._next_send:
+        if self._socket is None:
+            return {}
+        for flag in self.immediate:
+            value = frame[-1][self.names.index(flag)]
+            if (value >= 0.5) != self._last_state.get(flag, False):
+                self._last_state[flag] = value >= 0.5
+                self.send(flag, value)
+                if flag in self.on_change:
+                    try:
+                        self.on_change[flag](value >= 0.5)
+                    except Exception:   # pomiar nie może zatrzymać wysyłania do gry
+                        pass
+        if self._count < self._next_send:
             return {}
         self._next_send += self._every
         row = dict(zip(self.names, frame[-1]))

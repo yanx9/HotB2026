@@ -112,7 +112,7 @@ def main():
 
     try:
         import gpype as gp
-        from gpype_nodes import SignalClassifier, UdpJsonSender, build_front, stream_info
+        from gpype_nodes import SignalClassifier, UdpJsonSender, build_front, stream_info, with_raw_fz
         from profiles import assert_profile_source, load_profile
     except ImportError as exc:
         sys.exit(f"Brak zależności: {exc}\nZainstaluj: pip install -r bci/requirements.txt")
@@ -137,7 +137,13 @@ def main():
 
     pipeline = gp.Pipeline()
     source, filtered = build_front(pipeline, args.fake, args.serial, mains)
-    pipeline.connect(filtered, classifier)
+    if classifier.fast:
+        # szybkie detektory z profilu: klasyfikator dostaje też surowe Fz, a zmiany flag idą do gry od razu
+        pipeline.connect(with_raw_fz(pipeline, source, filtered), classifier)
+        sender.immediate = [name for name in ("eyes_closed_active", "jaw_active")
+                            if (classifier.fast.eyes if name.startswith("eyes") else classifier.fast.jaw)]
+    else:
+        pipeline.connect(filtered, classifier)
     pipeline.connect(classifier, sender)
 
     recorder = None
@@ -183,6 +189,10 @@ def main():
         if profile:
             ready = ", ".join(classifier.engine.detectors) or "BRAK — wykonaj kalibrację"
             print(f"Profil: {profile['subject']} · {args.profile} · gotowe detektory: {ready}")
+            if classifier.fast:
+                tuned = profile["fast"]
+                print(f"Szybkie detektory (decyzja co 16 ms): {', '.join(k for k in ('eyes', 'jaw') if k in tuned)}"
+                      f" · strojone na {tuned.get('tuned_on', '?')}")
         else:
             print("Bez profilu: nieskalibrowane heurystyki focus, laterality, jaw. Kalibracja: python bci/calibrate.py")
         print(f"{'SYNTETYCZNE EEG' if args.fake else 'Unicorn Hybrid Black'} -> filtry 1 Hz / {mains} Hz -> "
