@@ -11,7 +11,7 @@ namespace Mrok.Game
 {
     // Skradanka w zupełnej ciemności. Gdy gracz zamyka oczy (sygnał "eyes"), gra liczy czas;
     // gdy je otwiera, skan odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy
-    // były zamknięte. Strażnicy skanu nie słyszą: słyszą kroki i widzą to, co mają przed sobą.
+    // były zamknięte. Im większy skan, tym dalej słyszą go strażnicy; gracza nie widzą.
     //
     // W czasie gry na ekranie nie ma napisów: tekst pojawia się tylko na ekranie ładowania
     // i po zakończeniu poziomu, a wskazówki w świecie to napisy z punktów, które odsłania skan.
@@ -27,6 +27,7 @@ namespace Mrok.Game
         const float MinClosed = 0.5f;        // krótsze zamknięcie to mrugnięcie
         const float FullCharge = 6f;         // po tylu sekundach skan ma pełny zasięg
         const float MinRadius = 4f, MaxRadius = 28f;
+        const float ScanNoise = 0.55f;       // jaką część zasięgu skanu słychać
         const float WallMuffle = 0.55f;      // ściana na drodze skraca zasięg hałasu
         const float CatchDistance = 0.95f;
         const float RestartClosed = 1.5f;
@@ -37,6 +38,7 @@ namespace Mrok.Game
         const float ThrowSlow = 6f, ThrowFast = 16f, ThrowSwing = 1.1f;   // prędkość rzutu i czas jednego wahnięcia siły
         const float ThrowGravity = 12f, ThrowLift = 14f;                  // łuk celowo wyraźny; rzut idzie nieco ponad celownik
         const int MaxStones = 6;
+        const float RockScanSeconds = 1f;    // kamień, upadając, skanuje okolicę jak po tylu sekundach zamkniętych oczu
 
         static int levelIndex = Levels.Hub;
         static bool showDebug;               // F1: napisy diagnostyczne dla prowadzącego pokaz
@@ -213,7 +215,7 @@ namespace Mrok.Game
             eyesClosed = false;
             title.text = Spaced(level.title);
             body.text = string.Join("\n", level.intro);
-            footer.text = "WASD move     Clench jaw to sprint     Shift sneak     Ctrl crouch     Hold click to throw     Esc doors";
+            footer.text = "WASD move     Clench jaw to sprint     Shift sneak     Hold click to throw     Esc doors";
             curtain.color = Color.black;
             curtainTarget = 1f;
             loadUntil = Time.time + (level.hub ? 2.5f : 4.5f);
@@ -522,12 +524,15 @@ namespace Mrok.Game
                 }
                 else if (phase == Phase.Play && held >= MinClosed)
                 {
-                    Scan(Mathf.Lerp(MinRadius, MaxRadius, Mathf.Clamp01((held - MinClosed) / (FullCharge - MinClosed))), 1f);
+                    Scan(ScanRadius(held), 1f);
                     pulseAt = Time.time + HubPulse;
                 }
             }
             eyesClosed = closed;
         }
+
+        // zasięg skanu po tylu sekundach zamkniętych oczu
+        static float ScanRadius(float held) => Mathf.Lerp(MinRadius, MaxRadius, Mathf.Clamp01((held - MinClosed) / (FullCharge - MinClosed)));
 
         void Scan(float radius, float volume)
         {
@@ -536,13 +541,14 @@ namespace Mrok.Game
             cloud.Scan(player.EyePosition, radius, surfaces, Level.Signs);
             effects.pitch = Mathf.Lerp(1.3f, 0.75f, radius / MaxRadius);   // duży skan brzmi niżej i dłużej
             effects.PlayOneShot(ping, volume);
+            Noise(player.transform.position, radius * ScanNoise);
             MarkerSender.Send("scan", radius);
         }
 
         void OnPlayerStep(float reach)
         {
             effects.pitch = UnityEngine.Random.Range(0.9f, 1.1f);
-            effects.PlayOneShot(step, reach > 2f ? 0.35f : 0.12f);
+            effects.PlayOneShot(step, reach > 4f ? 0.35f : 0.12f);
             if (phase == Phase.Play) Noise(player.transform.position, reach);
         }
 
@@ -683,7 +689,12 @@ namespace Mrok.Game
                     flying = false;
                     Vector3 point = hit.collider != null ? hit.point : next;
                     AudioSource.PlayClipAtPoint(clack, point, 1f);
-                    echoes.Burst(point, hit.collider != null ? hit.normal : Vector3.up, new Color(1.2f, 2.2f, 2.6f), 2.5f);
+                    Vector3 normal = hit.collider != null ? hit.normal : Vector3.up;
+                    echoes.Burst(point, normal, new Color(1.2f, 2.2f, 2.6f), 2.5f);
+                    // uderzenie odsłania okolicę jak mały skan (tyle, co sekunda zamkniętych oczu);
+                    // strażnicy słyszą sam kamień, nie ten skan
+                    Physics.SyncTransforms();
+                    cloud.Scan(point + normal * 0.3f, ScanRadius(RockScanSeconds), surfaces, Level.Signs);
                     Noise(point, RockNoise, true);
                     MarkerSender.Send("rock");
                 }

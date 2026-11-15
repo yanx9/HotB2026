@@ -4,9 +4,9 @@ using UnityEngine;
 
 namespace Mrok.World
 {
-    // Strażnik chodzi po trasie patrolu. Słyszy kroki gracza: idzie w to miejsce, nasłuchuje
-    // chwilę i wraca na trasę. Widzi tylko to, co ma przed sobą i niezbyt daleko: gdy zobaczy
-    // gracza, goni go, a gdy straci go z oczu, sprawdza miejsce, w którym widział go ostatnio.
+    // Strażnik nie widzi w ciemności, ale słyszy. Chodzi po trasie patrolu; gdy usłyszy hałas
+    // (kroki gracza, skan, rzucony kamień), idzie w to miejsce, nasłuchuje chwilę i wraca na trasę.
+    // Wzrok (stożek przed twarzą i pogoń) jest wyłączony przełącznikiem Sight: okazał się za trudny.
     // Skan zapisuje go w pozie, w jakiej akurat był: w pół kroku albo rozglądającego się.
     public class Guard : MonoBehaviour
     {
@@ -17,6 +17,8 @@ namespace Mrok.World
         const float ListenSeconds = 3.5f, LoudListenSeconds = 7f;   // przy rzuconym kamieniu szuka dłużej
         const float SightRange = 10f, SightAngle = 55f;   // jest ciemno: widzi blisko i tylko przed sobą
         const float NoticeSeconds = 0.3f;                 // tyle musi patrzeć, zanim ruszy w pogoń
+
+        public static bool Sight = false;        // true: strażnicy widzą gracza przed sobą i go gonią
 
         public State state;
         public Vector2Int[] route;
@@ -71,8 +73,7 @@ namespace Mrok.World
 
         public bool Alerted => state == State.Investigate || state == State.Chase;
 
-        // Wolna linia od oczu do głowy albo tułowia gracza, w stożku przed twarzą. Gracz w kucki
-        // jest niższy, więc skrzynia, ławka czy stół zasłaniają go w całości.
+        // Wolna linia od oczu do głowy albo tułowia gracza, w stożku przed twarzą.
         bool Sees()
         {
             if (prey == null) return false;
@@ -80,7 +81,7 @@ namespace Mrok.World
             Vector3 to = feet - eyes, facing = figure.head.forward;
             to.y = 0f;
             if (to.magnitude > SightRange || Vector3.Angle(new Vector3(facing.x, 0f, facing.z), to) > SightAngle) return false;
-            return Clear(eyes, feet + Vector3.up * (prey.Height - 0.08f)) || Clear(eyes, feet + Vector3.up * prey.Height * 0.55f);
+            return Clear(eyes, feet + Vector3.up * (Player.Height - 0.08f)) || Clear(eyes, feet + Vector3.up * Player.Height * 0.55f);
         }
 
         bool Clear(Vector3 eyes, Vector3 target)
@@ -108,7 +109,7 @@ namespace Mrok.World
             if (voice == null || figure == null) return;   // po przeładowaniu skryptów gra buduje strażników od nowa
             float dt = Time.deltaTime;
 
-            noticed = Sees() ? noticed + dt : 0f;
+            noticed = Sight && Sees() ? noticed + dt : 0f;
             if (noticed >= NoticeSeconds)
             {
                 if (state != State.Chase) voice.PlayOneShot(alertClip, 1f);

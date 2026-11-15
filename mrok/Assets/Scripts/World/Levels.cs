@@ -138,7 +138,7 @@ namespace Mrok.World
                 {
                     new SignInfo("EYES SHUT\nLONGER = FARTHER", 3, 2, 'E', 3.4f),
                     new SignInfo("TAKE THE GOLD", 9, 2, 'E', 3.4f),
-                    new SignInfo("THEY SEE AHEAD\nCTRL = CROUCH AND HIDE", 14, 1, 'N', 3.3f),
+                    new SignInfo("THEY HEAR YOU\nSHIFT = SNEAK", 14, 1, 'N', 3.3f),
                     new SignInfo("PICK UP THE STONES\nHOLD CLICK TO THROW", 15, 13, 'S', 3.2f),
                     new SignInfo("LURE HIM AWAY\nTHEN SLIP PAST", 13, 11, 'W', 3.4f),
                     new SignInfo("GREEN = EXIT", 1, 11, 'W', 3.3f),
@@ -148,7 +148,7 @@ namespace Mrok.World
             new LevelInfo
             {
                 title = "MUSEUM",
-                intro = new[] { "Three pieces. Four guards. One green door.", "They hear footsteps and see what is in front of them. Crouch behind cover." },
+                intro = new[] { "Three pieces. Four guards. One green door.", "They cannot see you. They hear your steps and your scans." },
                 map = new[]
                 {
                     "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
@@ -196,7 +196,7 @@ namespace Mrok.World
             new LevelInfo
             {
                 title = "GARDEN",
-                intro = new[] { "Open sky. Hedges, trees, a pavilion.", "Crouch behind cover. Hedges hide you, not your footsteps." },
+                intro = new[] { "Open sky. Hedges, trees, a pavilion.", "Nobody can see you here. Everybody can hear you." },
                 wallHeight = 3.2f,
                 map = new[]
                 {

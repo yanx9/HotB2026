@@ -4,15 +4,13 @@ using UnityEngine.InputSystem;
 
 namespace Mrok.World
 {
-    // Chodzenie z pierwszej osoby: WASD, mysz albo Q / E do obracania, Shift do skradania,
-    // Ctrl (trzymany) albo C (przełącznik) do kucania. W kucki gracz jest niski, wolny i cichy:
-    // chowa się za skrzynią, ławką czy stołem przed wzrokiem strażnika.
+    // Chodzenie z pierwszej osoby: WASD, mysz albo Q / E do obracania, Shift do skradania.
     // Każdy krok zgłasza hałas o zasięgu zależnym od tempa.
     public class Player : MonoBehaviour
     {
-        const float WalkSpeed = 3f, SneakSpeed = 1.3f, CrouchSpeed = 1.1f, SprintSpeed = 5.2f;
-        const float WalkNoise = 6f, SneakNoise = 1.2f, CrouchNoise = 0.8f, SprintNoise = 10f;   // z jak daleka słychać krok
-        const float StandHeight = 1.7f, CrouchHeight = 0.95f;
+        const float WalkSpeed = 3f, SneakSpeed = 1.3f, SprintSpeed = 5.2f;
+        const float WalkNoise = 6f, SneakNoise = 3f, SprintNoise = 10f;   // z jak daleka słychać krok
+        public const float Height = 1.7f;
         const float StepLength = 1.3f;
 
         public Action<float> Stepped;   // argument: zasięg hałasu
@@ -21,12 +19,9 @@ namespace Mrok.World
 
         CharacterController body;
         Transform eyes;
-        float yaw, pitch, sinceStep, height = StandHeight;
-        bool crouchToggle;
+        float yaw, pitch, sinceStep;
 
-        public bool Crouching { get; private set; }
-        public float Height => height;   // czubek głowy nad podłogą: stąd strażnik liczy, czy coś gracza zasłania
-        public Vector3 EyePosition => transform.position + Vector3.up * (height - 0.1f);
+        public Vector3 EyePosition => transform.position + Vector3.up * (Height - 0.1f);
 
         public void Build(Camera cam, Vector3 start, float facing)
         {
@@ -41,7 +36,7 @@ namespace Mrok.World
 
             eyes = cam.transform;
             eyes.SetParent(transform, false);
-            eyes.localPosition = Vector3.up * (height - 0.1f);
+            eyes.localPosition = Vector3.up * (Height - 0.1f);
             eyes.localRotation = Quaternion.identity;
             yaw = facing;
         }
@@ -77,19 +72,6 @@ namespace Mrok.World
             transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             eyes.localRotation = Quaternion.Euler(pitch, 0f, 0f);
 
-            // kucanie: zderzacz i oczy opadają płynnie; wstać można tylko tam, gdzie jest miejsce nad głową
-            if (keyboard != null && !frozen)
-            {
-                if (keyboard.cKey.wasPressedThisFrame) crouchToggle = !crouchToggle;
-                bool want = crouchToggle || keyboard.leftCtrlKey.isPressed;
-                bool room = !Physics.Raycast(transform.position + Vector3.up * CrouchHeight, Vector3.up, StandHeight - CrouchHeight + 0.05f);
-                Crouching = want || (Crouching && !room);
-            }
-            height = Mathf.MoveTowards(height, Crouching ? CrouchHeight : StandHeight, 4f * dt);
-            body.height = height;
-            body.center = new Vector3(0f, height / 2f + 0.02f, 0f);
-            eyes.localPosition = Vector3.up * (height - 0.1f);
-
             Vector3 move = Vector3.zero;
             bool sneak = false;
             if (keyboard != null && !frozen)
@@ -101,15 +83,15 @@ namespace Mrok.World
             }
 
             Vector3 before = transform.position;
-            bool run = sprint && !Crouching && !sneak;
-            body.Move((move * (Crouching ? CrouchSpeed : sneak ? SneakSpeed : run ? SprintSpeed : WalkSpeed) + Vector3.down * 5f) * dt);
+            bool run = sprint && !sneak;
+            body.Move((move * (sneak ? SneakSpeed : run ? SprintSpeed : WalkSpeed) + Vector3.down * 5f) * dt);
             Vector3 moved = transform.position - before;
             moved.y = 0f;
             sinceStep += moved.magnitude;
             if (sinceStep >= StepLength)
             {
                 sinceStep = 0f;
-                Stepped?.Invoke(Crouching ? CrouchNoise : sneak ? SneakNoise : run ? SprintNoise : WalkNoise);
+                Stepped?.Invoke(sneak ? SneakNoise : run ? SprintNoise : WalkNoise);
             }
         }
     }

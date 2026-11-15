@@ -100,16 +100,15 @@ Potok liczy szczękę także bez jej kalibracji (heurystyka względem spoczynku)
 
 **Zasady**
 
-- **Strażnicy słyszą kroki** (bieg z 10 m, chód z 6 m, skradanie i kucanie z ok. 1 m; mur tłumi) i idą sprawdzić to miejsce. Skanu nie słyszą.
-- **Strażnicy widzą** to, co mają przed sobą: do 10 m, w stożku 55° na boki, jeśli nic nie zasłania. Zobaczywszy gracza, gonią go; zgubiwszy, sprawdzają miejsce, gdzie widzieli go ostatnio.
-- **Kucanie** obniża gracza do 0,95 m: skrzynia, ławka czy stół zasłaniają go wtedy w całości.
-- **Kamienie** leżą na podłodze (jasnoniebieskie). Podniesione można rzucać: przytrzymany lewy przycisk myszy kołysze siłę rzutu, łuk punktów pokazuje tor i miejsce upadku, puszczenie rzuca. Strażnik idzie w miejsce uderzenia i dłużej tam nasłuchuje. Wartownik na posterunku schodzi z niego tylko za kamieniem.
+- **Strażnicy nie widzą, ale słyszą:** kroki (bieg z 10 m, chód z 6 m, skradanie z 3 m) oraz skan, tym dalej, im większy (55% jego zasięgu). Mur tłumi hałas. Idą w to miejsce, nasłuchują i wracają na trasę. Złapanie to dotknięcie.
+- Wzrok strażników (stożek przed twarzą i pogoń) jest w kodzie, ale wyłączony, bo gra była z nim za trudna: `Guard.Sight` w `Guard.cs`.
+- **Kamienie** leżą na podłodze (jasnoniebieskie). Podniesione można rzucać: przytrzymany lewy przycisk myszy kołysze siłę rzutu, łuk punktów pokazuje tor i miejsce upadku, puszczenie rzuca. Uderzenie odsłania okolicę jak mały skan (ok. 6 m, tyle co sekunda zamkniętych oczu), a strażnik idzie w to miejsce i dłużej tam nasłuchuje. Wartownik na posterunku schodzi z niego tylko za kamieniem.
 - **Kroki strażników** słyszane z bliska zostawiają na podłodze gasnące pomarańczowe ślady (czerwone, gdy strażnik jest zaalarmowany).
 - Z zamkniętymi oczami można chodzić. Orientację daje wtedy dźwięk przestrzenny: kroki strażników, dzwonienie łupu i tyknięcia odliczające sekundy ładowania.
 
 **Poziomy** (`Levels.cs`: mapa znakowa, sale, patrole, posterunki, napisy)
 
-- **Tutorial:** sześć sal uczących po kolei skanu, łupu, kucania i rzutu kamieniem. Ostatniego wartownika nie da się minąć bez odciągnięcia go kamieniem.
+- **Tutorial:** sześć sal uczących po kolei skanu, łupu, skradania i rzutu kamieniem. Ostatniego wartownika nie da się minąć bez odciągnięcia go kamieniem.
 - **Museum:** hol, galeria z kolumnadą pod sklepieniem kolebkowym, rotunda z posągami pod kopułą, korytarz, biblioteka, dziedziniec z fontanną, magazyn ze skarbcem. Trzy łupy, czterech strażników.
 - **Garden:** labirynt żywopłotów, drzewa, głazy, altana z kopułą. Trzy łupy, czterech strażników.
 
@@ -122,7 +121,7 @@ W czasie rozgrywki nie ma napisów. Tekst jest tylko na ekranie ładowania i po 
 | Klawisz | Działanie |
 |---|---|
 | WASD, mysz (po kliknięciu w okno) albo Q / E | ruch, obrót |
-| Shift / Ctrl albo C | skradanie / kucanie |
+| Shift | skradanie |
 | lewy przycisk myszy (trzymaj i puść) | rzut kamieniem |
 | Spacja (trzymaj) | „mam zamknięte oczy”: zawsze zapisuje prawdę do nagrania (`truth_closed` / `truth_open`); w trybie KEY albo bez potoku BCI steruje też grą |
 | F | sprint z klawiatury (w trybie KEY albo bez potoku BCI) |
