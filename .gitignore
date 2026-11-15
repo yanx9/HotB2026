@@ -45,4 +45,3 @@ crashlytics-build.properties
 
 # Raw EEG recordings (can be large; share sample data deliberately)
 data/raw/
-data/calibration/

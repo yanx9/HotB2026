@@ -38,11 +38,21 @@ namespace Mrok.Game
         float closedAt;
         int ticks;
 
+        // Tryb sterowania oczami (F2). W obu trybach spacja to "prawda": gracz trzyma ją, gdy
+        // ma zamknięte oczy, a gra wysyła znaczniki truth_closed / truth_open do nagrania EEG.
+        //   KLAWISZ: grą steruje spacja; potok BCI tylko nagrywa (zbieranie danych do strojenia).
+        //   EEG:     grą steruje sygnał eyes_closed_active; spacja niczego w grze nie zmienia.
+        //            Bez danych z potoku spacja steruje jak dawniej, żeby dało się grać bez opaski.
+        static bool keyboardMode;
+        KeyboardSignalSource keyboardSource;
+        float truthAt;
+
         AudioSource effects;
         AudioClip ping, tick, step, pickup, caught, win;
         Image blackout;
         Text status, message, controls, signals;
         float messageUntil;
+        float fps = 60f;
         readonly StringBuilder builder = new StringBuilder();
 
         // do podglądu i testów
@@ -80,7 +90,8 @@ namespace Mrok.Game
             var config = SignalBindings.Load();
             bindings = GetOrAdd<SignalBindings>();
             bindings.Use(config);
-            GetOrAdd<KeyboardSignalSource>().bindings = bindings;
+            keyboardSource = GetOrAdd<KeyboardSignalSource>();
+            keyboardSource.bindings = bindings;
             var udp = GetOrAdd<UdpSignalSource>();
             if (udp.port != config.port)
             {
@@ -135,6 +146,7 @@ namespace Mrok.Game
             eyesClosed = false;
             Say("Jest zupełnie ciemno.\nZamknij oczy, policz do trzech i otwórz.", 600f);
             MarkerSender.Send("session_start");
+            MarkerSender.Send(keyboardMode ? "mode_keyboard" : "mode_eeg");
         }
 
         T GetOrAdd<T>() where T : Component
@@ -207,7 +219,8 @@ namespace Mrok.Game
             message = MakeText(canvasGo.transform, font, TextAnchor.MiddleCenter, 26, new Vector2(0f, 140f));
             controls = MakeText(canvasGo.transform, font, TextAnchor.LowerLeft, 14, new Vector2(16f, 12f));
             signals = MakeText(canvasGo.transform, font, TextAnchor.LowerRight, 14, new Vector2(-16f, 12f));
-            controls.text = "WASD  ruch (Shift: skradanie)\nmysz albo Q / E  obrót\nSpacja (trzymaj)  zamknięte oczy";
+            controls.text = "WASD  ruch (Shift: skradanie)\nmysz albo Q / E  obrót\n" +
+                            "Spacja: trzymaj, gdy masz zamknięte oczy\nF2  tryb KLAWISZ / EEG";
             Color dim = new Color(0.55f, 0.6f, 0.65f);
             status.color = controls.color = signals.color = dim;
         }
@@ -258,13 +271,38 @@ namespace Mrok.Game
             }
 
             if (Time.time > messageUntil) message.text = "";
-            status.text = $"łup {lootTotal - loot.Count}/{lootTotal}";
+            status.text = $"łup {lootTotal - loot.Count}/{lootTotal}\n" + (keyboardMode
+                ? "tryb KLAWISZ: steruje spacja, EEG tylko się nagrywa"
+                : BridgeAlive ? "tryb EEG: steruje opaska, spacja zapisuje prawdę"
+                              : "tryb EEG: brak potoku BCI, steruje spacja");
             ShowSignals();
         }
 
+        static bool BridgeAlive => Time.unscaledTime - UdpSignalSource.LastPacketAt < 2f;
+
         void UpdateEyes()
         {
-            bool closed = bindings.Held("eyes");
+            var keyboard = Keyboard.current;
+            if (keyboard != null && keyboard.f2Key.wasPressedThisFrame)
+            {
+                keyboardMode = !keyboardMode;
+                MarkerSender.Send(keyboardMode ? "mode_keyboard" : "mode_eeg");
+                Say(keyboardMode ? "Tryb KLAWISZ: oczami steruje spacja." : "Tryb EEG: oczami steruje opaska.", 2.5f);
+            }
+
+            // prawda do nagrania: spacja wciśnięta = gracz ma zamknięte oczy (w obu trybach)
+            bool space = keyboard != null && keyboard.spaceKey.isPressed;
+            if (keyboard != null && keyboard.spaceKey.wasPressedThisFrame)
+            {
+                truthAt = Time.time;
+                MarkerSender.Send("truth_closed");
+            }
+            if (keyboard != null && keyboard.spaceKey.wasReleasedThisFrame)
+                MarkerSender.Send("truth_open", Time.time - truthAt);
+
+            // w trybie EEG spacja nie może podmieniać sygnału z opaski, chyba że potoku nie ma
+            keyboardSource.enabled = keyboardMode || !BridgeAlive;
+            bool closed = keyboardMode ? space : bindings.Held("eyes");
             blackout.enabled = closed;
 
             if (closed && !eyesClosed)
@@ -398,7 +436,10 @@ namespace Mrok.Game
                 builder.Append(binding.action).Append(" ← ").Append(binding.source ?? binding.signal).Append("  ");
                 builder.AppendLine(binding.live ? binding.value.ToString("+0.00;-0.00") : "brak sygnału");
             }
-            bool bridge = Time.unscaledTime - UdpSignalSource.LastPacketAt < 2f;
+            // klatki na sekundę: wolna pętla gry opóźnia reakcję na sygnał z opaski
+            fps = Mathf.Lerp(fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.05f);
+            builder.Append("klatki/s ").AppendLine(fps.ToString("0"));
+            bool bridge = BridgeAlive;
             builder.Append(bridge ? "potok BCI: " + UdpSignalSource.LastSender : "potok BCI: brak danych");
             signals.text = builder.ToString();
         }

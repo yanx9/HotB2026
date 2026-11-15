@@ -30,8 +30,10 @@ class VirtualSource:
 
     clock = None
 
-    def __init__(self, fake=False, serial=None, mains_hz=50, artifact_uv=200, jaw_band=(55, 95)):
+    def __init__(self, fake=False, serial=None, mains_hz=50, artifact_uv=200, jaw_band=(55, 95),
+                 record_session=None):
         from processing import FeatureConfig
+        self.recorder, self.record_session, self.marks = None, record_session, []
         self.config = FeatureConfig(artifact_uv=artifact_uv, jaw_band=list(jaw_band)).validate()
         self.stream = {"name": "virtual", "transport": "gpype", "source_id": "fake-gpype",
                        "filters": {"highpass_hz": 1.0, "notch_hz": [mains_hz - 2, mains_hz + 2]}}
@@ -40,6 +42,9 @@ class VirtualSource:
 
     def set_state(self, state):
         self.state = state
+
+    def mark(self, name, value=0.0):
+        self.marks.append((name, value))
 
     def read(self):
         if self.stalled:
@@ -79,7 +84,7 @@ class CalibrationGuiTests(unittest.TestCase):
 
     def test_four_separate_views_connect_and_cancel_without_saving(self):
         with tempfile.TemporaryDirectory() as tmp:
-            args = parser().parse_args(["--fake", "--profile", str(Path(tmp) / "fake.json")])
+            args = parser().parse_args(["--fake", "--no-record", "--profile", str(Path(tmp) / "fake.json")])
             window = CalibrationApp(args)
             window.show()
             try:
@@ -132,6 +137,7 @@ class CalibrationGuiTests(unittest.TestCase):
                 try:
                     worker.connect_source(options)
                     self.assertEqual(errors, [])
+                    self.assertEqual(worker.source.record_session, "kalibracja_test")
                     worker.start_calibration("jaw", 6)
                     self.assertFalse(worker.recording)   # no samples yet: refuse to start
                     self.assertIn("Brak świeżych próbek", errors.pop())
@@ -146,6 +152,10 @@ class CalibrationGuiTests(unittest.TestCase):
                         self.assertFalse(worker.recording)
                         self.assertEqual(errors, [])
                         self.assertEqual(load_profile(path)["calibrations"][name]["status"], "ready")
+                        # every phase lands on the recording's marker channel
+                        names = [m for m, _ in worker.source.marks]
+                        self.assertEqual(names.count(f"cal_{name}_active"), 6)
+                        self.assertEqual(names[-1], f"cal_{name}_complete")
                     profile = load_profile(path)
                     self.assertEqual(set(profile["calibrations"]), set(SIGNALS))
                     self.assertEqual(profile["stream"]["transport"], "gpype")

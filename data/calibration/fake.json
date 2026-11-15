@@ -1,0 +1,342 @@
+{
+  "schema_version": 1,
+  "feature_version": "unicorn-spectral-v2",
+  "subject": "participant",
+  "created_at": "2026-11-15T01:48:10.682162+00:00",
+  "updated_at": "2026-11-15T01:50:25.273076+00:00",
+  "simulated": true,
+  "stream": {
+    "name": "SYNTETYCZNY Unicorn (g.Pype)",
+    "transport": "gpype",
+    "source_id": "fake-gpype",
+    "filters": {
+      "highpass_hz": 1.0,
+      "notch_hz": [
+        48,
+        52
+      ]
+    }
+  },
+  "feature_config": {
+    "sampling_rate": 250.0,
+    "channel_count": 8,
+    "eeg_channels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "posterior_channels": [
+      5,
+      7
+    ],
+    "c3": 1,
+    "c4": 3,
+    "artifact_uv": 200.0,
+    "jaw_band": [
+      55.0,
+      95.0
+    ],
+    "input_scale_uv": 1.0,
+    "channel_labels": [
+      "Fz",
+      "C3",
+      "Cz",
+      "C4",
+      "Pz",
+      "PO7",
+      "Oz",
+      "PO8"
+    ]
+  },
+  "calibrations": {
+    "eyes_closed": {
+      "signal": "eyes_closed",
+      "calibrated_at": "2026-11-15T01:50:25.265171+00:00",
+      "protocol": {
+        "trials": 10,
+        "rest_s": 6.0,
+        "active_s": 6.0,
+        "settle_s": 1.5,
+        "prepare_s": 5.0
+      },
+      "status": "ready",
+      "reason": "Parametry gotowe do testu sterowania; to nie walidacja kliniczna.",
+      "usable_trials": 10,
+      "total_trials": 10,
+      "window_s": 2.0,
+      "trials": [
+        {
+          "index": 1,
+          "rest": [
+            1.007862529474047,
+            1.0701554000849438
+          ],
+          "active": [
+            3.842446741625576,
+            3.7409917166709405
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 2,
+          "rest": [
+            0.9504841932365844,
+            1.0136145933244987
+          ],
+          "active": [
+            3.7091745080133824,
+            3.703001889336589
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 3,
+          "rest": [
+            0.9519004637425772,
+            0.9419693243560447
+          ],
+          "active": [
+            3.7598427734864925,
+            3.7341674606819204
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 4,
+          "rest": [
+            1.0522429203500392,
+            0.8985763669298024
+          ],
+          "active": [
+            3.773656276541824,
+            3.7844059934524092
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 5,
+          "rest": [
+            0.9090873322653801,
+            0.8867560847320592
+          ],
+          "active": [
+            3.7910702732469574,
+            3.723188494107681
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 6,
+          "rest": [
+            0.9727916709335265,
+            0.996690565152955
+          ],
+          "active": [
+            3.7937617292537595,
+            3.6920642927300555
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 7,
+          "rest": [
+            0.9279346741470232,
+            1.0272762806039004
+          ],
+          "active": [
+            3.831664690352029,
+            3.7528862859824526
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 8,
+          "rest": [
+            1.005159346159624,
+            1.0106360014922235
+          ],
+          "active": [
+            3.5958840687223406,
+            3.740998311335885
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 9,
+          "rest": [
+            0.9021414474069701,
+            0.9173479642364075
+          ],
+          "active": [
+            3.6667938649660883,
+            3.650107697615634
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 10,
+          "rest": [
+            1.0577296244844763,
+            0.8873200672792714
+          ],
+          "active": [
+            3.6841013206955884,
+            3.7097722020465786
+          ],
+          "rejected": 0
+        }
+      ],
+      "rest_center": 0.9776054773754619,
+      "active_center": 3.757129383677319,
+      "training_trials": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "validation_trials": [
+        8,
+        9,
+        10
+      ],
+      "threshold_raw": 2.5063436258414837,
+      "release_raw": 1.811462649266019,
+      "scale": 2.7795239063018573,
+      "threshold": 0.5500000000000002,
+      "release_threshold": 0.3,
+      "dwell_s": 0.3,
+      "smoothing_s": 0.4,
+      "hold_s": 1.5,
+      "validation": {
+        "method": "chronological_holdout_paired_trials",
+        "balanced_accuracy": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "window_balanced_accuracy": 1.0,
+        "training_balanced_accuracy": 1.0,
+        "separation": 55.59047812603714,
+        "note": "Mały test wewnątrz sesji; osobne kalibracje rąk nie walidują rozróżniania lewa/prawa."
+      },
+      "events": [
+        {
+          "phase": "prepare",
+          "trial": 0,
+          "t": 43782.2133939
+        },
+        {
+          "phase": "rest",
+          "trial": 1,
+          "t": 43787.2195307
+        },
+        {
+          "phase": "active",
+          "trial": 1,
+          "t": 43793.2195406
+        },
+        {
+          "phase": "rest",
+          "trial": 2,
+          "t": 43799.2199041
+        },
+        {
+          "phase": "active",
+          "trial": 2,
+          "t": 43805.2202295
+        },
+        {
+          "phase": "rest",
+          "trial": 3,
+          "t": 43811.229795
+        },
+        {
+          "phase": "active",
+          "trial": 3,
+          "t": 43817.2328951
+        },
+        {
+          "phase": "rest",
+          "trial": 4,
+          "t": 43823.2399543
+        },
+        {
+          "phase": "active",
+          "trial": 4,
+          "t": 43829.250022
+        },
+        {
+          "phase": "rest",
+          "trial": 5,
+          "t": 43835.2601633
+        },
+        {
+          "phase": "active",
+          "trial": 5,
+          "t": 43841.2627297
+        },
+        {
+          "phase": "rest",
+          "trial": 6,
+          "t": 43847.2699125
+        },
+        {
+          "phase": "active",
+          "trial": 6,
+          "t": 43853.2703392
+        },
+        {
+          "phase": "rest",
+          "trial": 7,
+          "t": 43859.282005
+        },
+        {
+          "phase": "active",
+          "trial": 7,
+          "t": 43865.2820532
+        },
+        {
+          "phase": "rest",
+          "trial": 8,
+          "t": 43871.2904952
+        },
+        {
+          "phase": "active",
+          "trial": 8,
+          "t": 43877.290628
+        },
+        {
+          "phase": "rest",
+          "trial": 9,
+          "t": 43883.3008869
+        },
+        {
+          "phase": "active",
+          "trial": 9,
+          "t": 43889.3103528
+        },
+        {
+          "phase": "rest",
+          "trial": 10,
+          "t": 43895.3104949
+        },
+        {
+          "phase": "active",
+          "trial": 10,
+          "t": 43901.3205839
+        },
+        {
+          "phase": "complete",
+          "trial": 10,
+          "t": 43907.330098
+        }
+      ]
+    }
+  }
+}

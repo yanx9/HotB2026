@@ -15,10 +15,31 @@ Aplikacja `bci/calibrate.py` ma cztery widoki:
 
 | Widok / sygnał | Zadanie | Cecha | Protokół domyślny |
 |---|---|---|---|
-| `eyes_closed` | oczy otwarte / zamknięte | log mocy alfa 8–13 Hz z Pz, PO7, Oz, PO8; okno 2 s | 10 par, 6 s spoczynku + 6 s zadania |
+| `eyes_closed` | oczy otwarte / zamknięte | alfa względna: mediana z PO7 i PO8 z log(moc 8–13 Hz / moc 4–7 + 15–30 Hz); okno 2 s | 10 par, 6 s spoczynku + 6 s zadania, 1,5 s na ustalenie |
 | `right_hand` | spoczynek / wyobrażanie ruchu prawej dłoni | log mocy 8–30 Hz C4 minus log mocy C3; okno 1 s | 12 par, 6 + 6 s |
 | `left_hand` | spoczynek / wyobrażanie ruchu lewej dłoni | log mocy 8–30 Hz C3 minus log mocy C4; okno 1 s | 12 par, 6 + 6 s |
 | `jaw` | rozluźnienie / lekkie zaciśnięcie szczęki | log10 mocy 55–95 Hz z 8 kanałów EEG; okno 0,25 s | 10 par, 4 + 2 s |
+
+**Detektor oczu (cechy v2).** Zamknięcie oczu podnosi rytm alfa nad korą wzrokową (efekt Bergera). Cecha jest stosunkiem mocy alfa do pasm sąsiednich, a nie mocą bezwzględną:
+
+- gorszy kontakt elektrody mnoży wszystkie pasma tak samo, więc stosunek się nie zmienia;
+- EMG szczęki podnosi mianownik, więc nie udaje zamkniętych oczu.
+
+Każdy kanał jest oceniany osobno. Płaski albo przekraczający próg artefaktów kanał wypada tylko z bieżącego okna, a okno jest odrzucane dopiero wtedy, gdy nie zostaje żaden kanał. Oz i Pz nie są używane.
+
+Na nagraniach testowych z tą opaską:
+
+| Wariant | Odrzucone okna | Kalibracja | Fałszywe zamknięcia przy otwartych oczach |
+|---|---|---|---|
+| poprzednia cecha (Pz, PO7, **Oz**, PO8) | ok. 40% | nie powstawała (`insufficient_data`) | — |
+| moc bezwzględna z PO7/PO8 | — | — | ok. 0,9/min |
+| alfa względna z PO7/PO8 | 1–13% | — | ok. 0,2/min |
+
+Oz leży na szwie czepka. Pz nie zwiększał rozdzielności.
+
+Odrzucone okno (mrugnięcie, ruch głowy, krótki zacisk szczęki) nie przełącza oczu na „otwarte”. Detektor trzyma ostatnią decyzję do 1,5 s (`hold_s` w profilu) i dopiero potem zgłasza `valid=0`. Czas reakcji wynosi ok. 2,5–3 s od zamknięcia i ok. 0,3–2,5 s od otwarcia. Składają się na niego okno 2 s, wygładzanie 0,4 s i potwierdzenie 0,3 s.
+
+Profile zapisane przed tą zmianą (`unicorn-spectral-v1`) mają inną skalę cechy i są odrzucane. Trzeba wtedy wykonać kalibrację ponownie.
 
 Szczęka jest detektorem aktywności **mięśniowej (EMG)**. Kalibracje rąk wymagają wyobrażania odczucia ruchu bez fizycznego poruszania dłonią i napinania mięśni. Oczy są pomiarem reaktywności alfa, nie miernikiem relaksu. Są to eksperymentalne cechy sterujące, nie diagnoza ani walidacja terapeutyczna.
 
@@ -40,7 +61,7 @@ python bci/calibrate.py
 1. Podaj identyfikator osoby/sesji i ścieżkę JSON; domyślnie `data/calibration/participant.json`.
 2. Przy kilku opaskach w zasięgu wpisz numer seryjny; puste pole oznacza ostatnio używaną albo jedyną widoczną. Wybierz częstotliwość sieci (w Europie 50 Hz). Wybierz **Połącz** i poczekaj na status „dane aktualne”; łączenie przez Bluetooth trwa kilka sekund.
 3. Licznik ramek powinien rosnąć. Liczba resynchronizacji czasu powinna pozostać mała; rośnie, gdy Bluetooth gubi dane.
-4. Sprawdź oba tony i potwierdź, że je słyszysz. **Wysoki ton = zadanie; niski = spoczynek**. W kalibracji oczu oznacza to odpowiednio zamknięcie i otwarcie oczu. Osobny końcowy ton oznacza ukończenie.
+4. Sprawdź oba tony i potwierdź, że je słyszysz. **Wysoki, długi ton = zadanie; dwa krótkie, niskie = spoczynek**. W kalibracji oczu oznacza to odpowiednio zamknięcie i otwarcie oczu. Osobny końcowy ton oznacza ukończenie.
 5. Wybierz dowolny z czterech widoków i uruchom kalibrację. Po przygotowaniu następują naprzemienne fazy spoczynku i zadania. Nie musisz wykonywać wszystkich czterech naraz. Przycisk **Przerwij** zachowuje poprzednio zapisany wynik.
 6. Po pełnym przebiegu program pokazuje parametry, liczbę przyjętych prób i wynik walidacji oraz zapisuje profil automatycznie. Kolejne kalibracje aktualizują tylko swój wpis w tym samym profilu.
 7. Po ukończeniu można obserwować podgląd 0–1 / AKTYWNY w każdym widoku. Powtórzenie kalibracji tego samego sygnału zastępuje poprzedni wynik po pełnym przebiegu — również wtedy, gdy nowy wynik jest negatywny. Nieudany wynik wyłącza detektor.
@@ -95,7 +116,7 @@ Niezależny od gier format UDP pozostaje płaski: `type`, `name`, `value`, `t`. 
 | `laterality_valid` | 0 albo 1 | ważność osi; równoczesna aktywacja obu rąk daje nieważne zero |
 | `focus`, `focus_valid` | 0–1 | dotychczasowa, **nieskalibrowana** heurystyka i ważność |
 
-`active=0` nie oznacza błędu pomiaru; do tego służy `valid=0`. Przy braku modelu albo artefakcie potok wysyła neutralne zero zamiast starej wartości; gdy dane z opaski ustaną, przestaje nadawać i gra po sekundzie uznaje sygnał za nieobecny. Kalibrowana aktywność szczęki blokuje wyniki oczu i rąk, lecz ten mechanizm nie jest pełnym systemem usuwania EMG. Potok dodatkowo wysyła komendy `left`/`right` co 0,5 s podczas potwierdzonej aktywacji, zgodne z odbiornikiem ogrodu. `--no-commands` pozostawia same metryki. Wartość komendy to wynik 0–1, nie skalibrowane prawdopodobieństwo.
+`active=0` nie oznacza błędu pomiaru; do tego służy `valid=0`. Przy braku modelu albo artefakcie potok wysyła neutralne zero zamiast starej wartości. Wyjątek: detektor z `hold_s > 0` (oczy) przez ten czas trzyma ostatnią decyzję z `valid=1`; gdy dane z opaski ustaną, przestaje nadawać i gra po sekundzie uznaje sygnał za nieobecny. Kalibrowana aktywność szczęki blokuje wyniki oczu i rąk, lecz ten mechanizm nie jest pełnym systemem usuwania EMG. Potok dodatkowo wysyła komendy `left`/`right` co 0,5 s podczas potwierdzonej aktywacji, zgodne z odbiornikiem ogrodu. `--no-commands` pozostawia same metryki. Wartość komendy to wynik 0–1, nie skalibrowane prawdopodobieństwo.
 
 - **Ogród**: obsługuje `left`, `right`, `focus`. Kalibracja nie generuje P300 ani komendy `select`.
 - **Precel**: `laterality` i `jaw_active` (bez profilu zastępczo `jaw`); mapowanie na akcje jest w `Resources/signals.json`.

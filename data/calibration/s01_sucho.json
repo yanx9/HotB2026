@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "feature_version": "unicorn-spectral-v2",
+  "subject": "s01",
+  "created_at": "2026-11-15T02:16:34.077022+00:00",
+  "updated_at": "2026-11-15T02:19:01.086110+00:00",
+  "simulated": false,
+  "stream": {
+    "name": "Unicorn Hybrid Black (g.Pype)",
+    "transport": "gpype",
+    "source_id": "UN-2026.08.19",
+    "filters": {
+      "highpass_hz": 1.0,
+      "notch_hz": [
+        48,
+        52
+      ]
+    }
+  },
+  "feature_config": {
+    "sampling_rate": 250.0,
+    "channel_count": 8,
+    "eeg_channels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "posterior_channels": [
+      5,
+      7
+    ],
+    "c3": 1,
+    "c4": 3,
+    "artifact_uv": 200.0,
+    "jaw_band": [
+      55.0,
+      95.0
+    ],
+    "input_scale_uv": 1.0,
+    "channel_labels": [
+      "Fz",
+      "C3",
+      "Cz",
+      "C4",
+      "Pz",
+      "PO7",
+      "Oz",
+      "PO8"
+    ]
+  },
+  "calibrations": {
+    "eyes_closed": {
+      "signal": "eyes_closed",
+      "calibrated_at": "2026-11-15T02:19:01.079909+00:00",
+      "protocol": {
+        "trials": 10,
+        "rest_s": 6.0,
+        "active_s": 6.0,
+        "settle_s": 1.5,
+        "prepare_s": 5.0
+      },
+      "status": "ready",
+      "reason": "Parametry gotowe do testu sterowania; to nie walidacja kliniczna.",
+      "usable_trials": 8,
+      "total_trials": 10,
+      "window_s": 2.0,
+      "trials": [
+        {
+          "index": 1,
+          "rest": [
+            -0.6102085837096696,
+            -0.8575705006521586
+          ],
+          "active": [
+            -0.09735689590907984,
+            0.3803376362778917
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 2,
+          "rest": [
+            -1.5242855650482516,
+            -1.8227314075887344
+          ],
+          "active": [
+            1.588367457666042,
+            1.509783546617031
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 3,
+          "rest": [
+            -0.8098576805885668,
+            -1.3517893265278869
+          ],
+          "active": [
+            2.2643163135700393,
+            0.3626248372542731
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 4,
+          "rest": [
+            -1.2488280284313562,
+            -1.3159232361236117
+          ],
+          "active": [
+            1.0641334244257707,
+            1.7383033133156987
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 5,
+          "rest": [
+            -1.169526085155161,
+            -0.9973422116061015
+          ],
+          "active": [
+            1.989664616214861,
+            1.8903664142053234
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 6,
+          "rest": [
+            -0.9406842651182681,
+            -0.9995216447060876
+          ],
+          "active": [
+            0.6059533927603891,
+            1.2691188590010634
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 7,
+          "rest": [
+            -0.8764869447752757,
+            -1.8257835520901835
+          ],
+          "active": [
+            1.3576073330152412,
+            0.806960495284914
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 8,
+          "rest": [
+            -1.0009366939157849,
+            -1.2582296550755414
+          ],
+          "active": [
+            1.239831107361864
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 9,
+          "rest": [
+            -1.6449322102390476,
+            -0.7568728997666494
+          ],
+          "active": [
+            1.1853813748255775,
+            1.4953395764668955
+          ],
+          "rejected": 0
+        },
+        {
+          "index": 10,
+          "rest": [
+            -0.3418805618736925
+          ],
+          "active": [
+            1.311274136003003,
+            0.27020881598455476
+          ],
+          "rejected": 0
+        }
+      ],
+      "rest_center": -1.082128825969429,
+      "active_center": 1.3573444721414454,
+      "training_trials": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "validation_trials": [
+        7,
+        9
+      ],
+      "threshold_raw": 0.2595814879915519,
+      "release_raw": -0.35028683653616677,
+      "scale": 2.439473298110874,
+      "threshold": 0.55,
+      "release_threshold": 0.3,
+      "dwell_s": 0.3,
+      "smoothing_s": 0.4,
+      "hold_s": 1.5,
+      "validation": {
+        "method": "chronological_holdout_paired_trials",
+        "balanced_accuracy": 1.0,
+        "sensitivity": 1.0,
+        "specificity": 1.0,
+        "window_balanced_accuracy": 1.0,
+        "training_balanced_accuracy": 0.9166666666666667,
+        "separation": 4.322531321101314,
+        "note": "Mały test wewnątrz sesji; osobne kalibracje rąk nie walidują rozróżniania lewa/prawa."
+      },
+      "events": [
+        {
+          "phase": "prepare",
+          "trial": 0,
+          "t": 45498.0467734
+        },
+        {
+          "phase": "rest",
+          "trial": 1,
+          "t": 45503.0547831
+        },
+        {
+          "phase": "active",
+          "trial": 1,
+          "t": 45509.0552897
+        },
+        {
+          "phase": "rest",
+          "trial": 2,
+          "t": 45515.0556463
+        },
+        {
+          "phase": "active",
+          "trial": 2,
+          "t": 45521.0654453
+        },
+        {
+          "phase": "rest",
+          "trial": 3,
+          "t": 45527.0657212
+        },
+        {
+          "phase": "active",
+          "trial": 3,
+          "t": 45533.0753583
+        },
+        {
+          "phase": "rest",
+          "trial": 4,
+          "t": 45539.075598
+        },
+        {
+          "phase": "active",
+          "trial": 4,
+          "t": 45545.0849046
+        },
+        {
+          "phase": "rest",
+          "trial": 5,
+          "t": 45551.0853496
+        },
+        {
+          "phase": "active",
+          "trial": 5,
+          "t": 45557.0964163
+        },
+        {
+          "phase": "rest",
+          "trial": 6,
+          "t": 45563.1047511
+        },
+        {
+          "phase": "active",
+          "trial": 6,
+          "t": 45569.1056302
+        },
+        {
+          "phase": "rest",
+          "trial": 7,
+          "t": 45575.1060719
+        },
+        {
+          "phase": "active",
+          "trial": 7,
+          "t": 45581.1175354
+        },
+        {
+          "phase": "rest",
+          "trial": 8,
+          "t": 45587.1258619
+        },
+        {
+          "phase": "active",
+          "trial": 8,
+          "t": 45593.135012
+        },
+        {
+          "phase": "rest",
+          "trial": 9,
+          "t": 45599.1350648
+        },
+        {
+          "phase": "active",
+          "trial": 9,
+          "t": 45605.1353422
+        },
+        {
+          "phase": "rest",
+          "trial": 10,
+          "t": 45611.1361713
+        },
+        {
+          "phase": "active",
+          "trial": 10,
+          "t": 45617.1445814
+        },
+        {
+          "phase": "complete",
+          "trial": 10,
+          "t": 45623.1449864
+        }
+      ]
+    }
+  }
+}

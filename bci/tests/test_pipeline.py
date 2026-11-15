@@ -67,8 +67,11 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(check(active), (name, active))
             self.assertEqual(active["jaw_active"], 0)
             _, t = feed(node, "rest", 3, demo, t)
-        clench, t = feed(node, "jaw", 1.5, demo, t)
+        clench, t = feed(node, "jaw", 1.0, demo, t)
         self.assertEqual(clench["jaw_active"], 1)
+        # a short clench does not flip the eyes decision: it is held (eyes hold_s = 1.5 s)
+        self.assertEqual((clench["eyes_closed_valid"], clench["eyes_closed_active"]), (1, 0))
+        clench, t = feed(node, "jaw", 2.0, demo, t)
         # a clench gates the EEG-based signals instead of rewarding muscle activity
         for name in ("eyes_closed", "right_hand", "left_hand", "laterality", "focus"):
             self.assertEqual(clench[name + "_valid"], 0, name)
@@ -109,19 +112,28 @@ class PipelineTests(unittest.TestCase):
     def test_diagnosis_names_the_channel_that_breaks_the_signals(self):
         node = SignalClassifier(self.profile)
         node.setup({}, context())
-        demo, out = DemoSource(), None
-        for i in range(250):   # 4 s, PO7 swinging by 600 µV as a loose electrode would
-            t = (i * 4 + np.arange(4)) / 250
-            x = demo.samples(t, "rest")
-            x[:, 5] += 300 * np.sign(np.sin(2 * np.pi * 0.7 * t))
-            out = node.step({PORT_IN: x.astype(np.float32)})[PORT_OUT]
-        values = dict(zip(node.names, out[-1]))
-        self.assertEqual(values["eyes_closed_valid"], 0)
+        demo = DemoSource()
+
+        def run(loose, start):
+            out = None
+            for i in range(250):   # 4 s, loose electrodes swinging by 600 µV
+                t = start + (i * 4 + np.arange(4)) / 250
+                x = demo.samples(t, "rest")
+                x[:, loose] += 300 * np.sign(np.sin(2 * np.pi * 0.7 * t))[:, None]
+                out = node.step({PORT_IN: x.astype(np.float32)})[PORT_OUT]
+            return dict(zip(node.names, out[-1]))
+
+        # one loose posterior electrode: eyes carry on from the other one
+        values = run([5], 0.0)
+        self.assertEqual(values["eyes_closed_valid"], 1)
         text = node.diagnose()
-        self.assertIn("eyes_closed: artefakt amplitudy", text)
         self.assertRegex(text, r"PO7 \d+!")
         self.assertNotRegex(text, r"Fz \d+!")
         self.assertIn("okno 2.0/2 s", text)
+        # both loose: no usable channel, and after hold_s the signal is reported invalid
+        values = run([5, 7], 4.0)
+        self.assertEqual(values["eyes_closed_valid"], 0)
+        self.assertIn("eyes_closed: artefakt amplitudy", node.diagnose())
 
     def test_sender_emits_protocol_messages_and_commands(self):
         receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -170,6 +182,45 @@ class PipelineTests(unittest.TestCase):
         self.assertLess(spectrum[freqs == 50][0], 2)
         self.assertGreater(spectrum[freqs == 10][0], 3)   # the EEG rhythm itself is kept
         self.assertLess(abs(tail.mean()), 3)
+
+    def test_recording_puts_markers_on_eeg_samples(self):
+        import gpype as gp
+        import tempfile
+        from gpype_nodes import build_front
+        from recording import Recorder, load_recording
+        with tempfile.TemporaryDirectory() as tmp:
+            pipeline = gp.Pipeline()
+            source, filtered = build_front(pipeline, fake=True)
+            node = SignalClassifier(self.profile)
+            pipeline.connect(filtered, node)
+            recorder = Recorder("test", folder=tmp)
+            recorder.attach(pipeline, source, filtered, node, node.names)
+            pipeline.start()
+            try:
+                time.sleep(1.5)
+                recorder.mark("truth_closed")
+                recorder.mark("eyes_closed")          # the same instant: must not overwrite
+                time.sleep(1.0)
+                recorder.mark("truth_open", 1.0)
+                recorder.mark("nowy_znacznik", 7)      # unknown name gets its own code
+                time.sleep(0.5)
+            finally:
+                pipeline.stop()
+                pipeline.close()
+                recorder.close()
+            data, events, meta = load_recording(tmp)
+            del pipeline, source, filtered, node   # release the HDF5 file before the folder goes
+        self.assertEqual(meta["columns"][:3], ["raw_Fz", "raw_C3", "raw_Cz"])
+        self.assertIn("out_eyes_closed_active", data)
+        self.assertEqual([e["name"] for e in events], ["truth_closed", "eyes_closed", "truth_open", "nowy_znacznik"])
+        samples = [e["sample"] for e in events]
+        self.assertTrue(all(s is not None for s in samples), samples)
+        self.assertGreaterEqual(samples[1] - samples[0], 1)                 # pushed apart, both kept
+        self.assertAlmostEqual((samples[2] - samples[0]) / 250, 1.0, delta=0.05)
+        self.assertGreaterEqual(meta["marker_codes"]["nowy_znacznik"], 100)
+        self.assertEqual(events[3]["value"], 7)
+        # raw keeps the synthetic drift and mains hum, flt is what the classifier saw
+        self.assertGreater(np.ptp(data["raw_Fz"]), np.ptp(data["flt_Fz"][250:]))
 
     def test_synthetic_source_cycles_through_tasks(self):
         node = SyntheticUnicorn()

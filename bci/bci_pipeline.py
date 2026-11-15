@@ -8,7 +8,8 @@ Wszystko działa w jednym procesie g.Pype: HybridBlack -> Highpass -> Bandstop -
 SignalClassifier -> UdpJsonSender. Potok nie wie nic o grach: wysyła nazwane sygnały,
 a każda gra sama wybiera, których słucha (docs/protocol.md).
 
-Znaczniki z gier (UDP 5006) trafiają do data/raw/bci_markers_*.jsonl.
+Znaczniki z gier (UDP 5006) trafiają do data/raw/bci_markers_*.jsonl, a przy nagrywaniu
+(domyślnie) także na kanał znaczników w data/raw/<sesja>_<czas>/eeg_*.h5 (recording.py).
 Profil powstaje w kalibratorze: python bci/calibrate.py (docs/calibration.md).
 """
 
@@ -31,8 +32,11 @@ def parse_target(text):
     return host, int(port)
 
 
-def log_markers(sock, path):
-    """Znaczniki gier -> JSONL. Czas zdarzenia podaje gra; czas odbioru dopisujemy obok."""
+def log_markers(sock, path, recorder=None):
+    """Znaczniki gier -> JSONL i (z recorder) na próbkę EEG z chwili odbioru.
+
+    Czas gry zapisujemy obok, ale o pozycji w nagraniu decyduje chwila odbioru: zegar gry
+    może być na innym komputerze. Na jednym komputerze UDP dokłada < 1 ms."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as file:
         while True:
@@ -47,12 +51,14 @@ def log_markers(sock, path):
                     continue
             except (ValueError, KeyError, TypeError):
                 continue
+            if recorder:
+                recorder.mark(name, value, t)
             file.write(json.dumps({"marker": name, "value": value, "t_game_unix": t,
                                    "t_received_unix": time.time()}, ensure_ascii=False) + "\n")
             file.flush()
 
 
-def start_markers(port, path):
+def start_markers(port, path, recorder=None):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind(("0.0.0.0", port))
@@ -60,7 +66,7 @@ def start_markers(port, path):
         sock.close()
         raise OSError(f"Port znaczników {port} jest zajęty ({exc}). Zamknij drugi potok / marker_logger.py "
                       "albo dodaj --no-markers.") from exc
-    threading.Thread(target=log_markers, args=(sock, path), daemon=True).start()
+    threading.Thread(target=log_markers, args=(sock, path, recorder), daemon=True).start()
     print(f"Znaczniki gier: UDP {port} -> {path}")
     return sock
 
@@ -68,15 +74,21 @@ def start_markers(port, path):
 def report(classifier, sender, every=2.0):
     """Co kilka sekund stan klasyfikatora w konsoli, także przy otwartym oknie g.Pype."""
     count, last = classifier._count, time.monotonic()
+    best = None   # najmniejsze (zegar - próbki/fs): chwila, w której potok był najbardziej na bieżąco
     while True:
         time.sleep(every)
         now = time.monotonic()
         rate = (classifier._count - count) / (now - last)
         count, last = classifier._count, now
+        # Zaległość: o ile sekund przetwarzanie jest dalej za opaską niż w najlepszej chwili.
+        # Rośnie, gdy dane z Bluetooth / potok nie nadążają; wtedy gra reaguje z opóźnieniem.
+        offset = now - count / 250
+        best = offset if best is None else min(best, offset)
         values = dict(zip(classifier.names, classifier._values))
         shown = "  ".join(f"{name}={value:.2f}" for name, value in values.items()
                           if not name.endswith(("_valid", "_active")))
-        print(f"{shown}  · wysłano {sender.sent}\n  EEG {rate:.0f} Hz · {classifier.diagnose()}", flush=True)
+        print(f"{shown}  · wysłano {sender.sent}\n  EEG {rate:.0f} Hz · zaległość {offset - best:.2f} s · "
+              f"{classifier.diagnose()}", flush=True)
 
 
 def main():
@@ -94,6 +106,8 @@ def main():
     parser.add_argument("--marker-file", type=Path, help="domyślnie data/raw/bci_markers_<data>.jsonl")
     parser.add_argument("--no-markers", action="store_true", help="nie zajmuj portu znaczników")
     parser.add_argument("--no-gui", action="store_true", help="bez okna podglądu g.Pype")
+    parser.add_argument("--session", default="gra", help="nazwa sesji w nazwie folderu nagrania, np. mrok_s01")
+    parser.add_argument("--no-record", action="store_true", help="nie zapisuj EEG (domyślnie data/raw/<sesja>_<czas>/)")
     args = parser.parse_args()
 
     try:
@@ -122,9 +136,25 @@ def main():
     sender = UdpJsonSender(classifier.names, targets, commands)
 
     pipeline = gp.Pipeline()
-    _, filtered = build_front(pipeline, args.fake, args.serial, mains)
+    source, filtered = build_front(pipeline, args.fake, args.serial, mains)
     pipeline.connect(filtered, classifier)
     pipeline.connect(classifier, sender)
+
+    recorder = None
+    if not args.no_record:
+        from recording import Recorder
+        recorder = Recorder(args.session, info={
+            "kind": "game", "profile": str(Path(args.profile).resolve()) if args.profile else None,
+            "subject": profile["subject"] if profile else None, "simulated": bool(args.fake),
+            "stream": stream_info(args.fake, args.serial, mains),
+            "feature_config": classifier.feature_config.to_dict()})
+        recorder.attach(pipeline, source, filtered, classifier, classifier.names)
+        if "eyes_closed_active" in classifier.names:
+            # chwila wysłania decyzji do gry; z reakcją gry rozdziela opóźnienie potoku i Unity
+            sender.on_change["eyes_closed_active"] = lambda closed: recorder.mark(
+                "pipe_eyes_closed" if closed else "pipe_eyes_open")
+        if args.no_markers:
+            print("Uwaga: --no-markers - nagranie nie będzie miało znaczników z gry.")
 
     app = None
     if not args.no_gui:
@@ -146,7 +176,8 @@ def main():
     try:
         if not args.no_markers:
             marker_socket = start_markers(args.marker_port, args.marker_file or
-                                          ROOT / "data/raw" / time.strftime("bci_markers_%Y%m%d_%H%M%S.jsonl"))
+                                          ROOT / "data/raw" / time.strftime("bci_markers_%Y%m%d_%H%M%S.jsonl"),
+                                          recorder)
         if profile:
             ready = ", ".join(classifier.engine.detectors) or "BRAK — wykonaj kalibrację"
             print(f"Profil: {profile['subject']} · {args.profile} · gotowe detektory: {ready}")
@@ -155,6 +186,8 @@ def main():
         print(f"{'SYNTETYCZNE EEG' if args.fake else 'Unicorn Hybrid Black'} -> filtry 1 Hz / {mains} Hz -> "
               f"sygnały {', '.join(f'{host}:{port}' for host, port in targets)} (Ctrl+C kończy)")
         pipeline.start()
+        if recorder:
+            print(f"Nagrywanie: {recorder.folder}")
         if app:
             threading.Thread(target=report, args=(classifier, sender), daemon=True).start()
             app.run()
@@ -171,6 +204,9 @@ def main():
             pipeline.close()
             if marker_socket:
                 marker_socket.close()
+            if recorder:
+                recorder.close()
+                print(f"Zapisano nagranie: {recorder.folder} (znaczników: {recorder.count})")
 
 
 if __name__ == "__main__":

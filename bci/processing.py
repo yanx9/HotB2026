@@ -138,6 +138,13 @@ class JawMeter:
 UNICORN_LABELS = ("Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8")
 SIGNALS = ("eyes_closed", "right_hand", "left_hand", "jaw")
 
+# Oczy: alfa WZGLĘDNA = moc 8-13 Hz / moc pasm sąsiednich (theta 4-7 + beta 15-30 Hz).
+# Stosunek nie zależy od impedancji elektrody (wspólny mnożnik się skraca), a EMG szczęki
+# podnosi mianownik, więc nie udaje zamkniętych oczu. Mediana po kanałach, z których każdy
+# jest oceniany osobno: jedna odklejona elektroda nie unieważnia całego okna.
+EYES_ALPHA_HZ = (8, 13)
+EYES_REFERENCE_HZ = ((4, 7), (15, 30))
+
 
 @dataclass
 class FeatureConfig:
@@ -146,7 +153,9 @@ class FeatureConfig:
     sampling_rate: float = 250.0
     channel_count: int = 8
     eeg_channels: list = field(default_factory=lambda: list(range(8)))
-    posterior_channels: list = field(default_factory=lambda: [4, 5, 6, 7])
+    # PO7, PO8. Oz leży na szwie czepka Unicorna i w nagraniach testowych przekraczał próg
+    # artefaktów w ~40% okien; Pz nie zwiększał rozdzielności (docs/calibration.md).
+    posterior_channels: list = field(default_factory=lambda: [5, 7])
     c3: int = 1
     c4: int = 3
     artifact_uv: float = 200.0
@@ -184,10 +193,35 @@ def feature_window(name):
     return {"eyes_closed": 2.0, "right_hand": 1.0, "left_hand": 1.0, "jaw": 0.25}[name]
 
 
+def _band(freqs, low, high):
+    return (freqs >= low) & (freqs <= high)
+
+
+def eyes_feature(raw, srate, artifact_uv):
+    """Median over usable posterior channels of log(alpha / (theta + beta)).
+
+    Each channel is judged on its own: flat (< 0.01 µV p-p) or above the artifact
+    threshold drops that channel only. The window is rejected when none is left.
+    """
+    ranges = np.ptp(raw, axis=0)
+    usable = (ranges >= 0.01) & (ranges <= artifact_uv)
+    if not usable.any():
+        return None, "flat_channel" if np.all(ranges < 0.01) else "amplitude_artifact"
+    x = detrend(raw[:, usable], axis=0)
+    freqs, psd = welch(x, fs=srate, nperseg=min(len(x), round(srate)), axis=0)
+    alpha = psd[_band(freqs, *EYES_ALPHA_HZ)].sum(axis=0)
+    reference = sum(psd[_band(freqs, low, high)].sum(axis=0) for low, high in EYES_REFERENCE_HZ)
+    if not (np.isfinite(alpha).all() and np.isfinite(reference).all()) or np.any(alpha <= 1e-12) \
+            or np.any(reference <= 1e-12):
+        return None, "no_band_power"
+    return float(np.median(np.log(alpha / reference))), None
+
+
 def extract_feature(window, name, config):
     """Returns (raw feature, rejection reason). Fixed, directional features.
 
-    Eyes: posterior log alpha power. Right/left: opposite sensorimotor log
+    Eyes: relative posterior alpha, log(alpha / (theta + beta)), per-channel
+    artifact handling (eyes_feature). Right/left: opposite sensorimotor log
     power contrasts (8-30 Hz). Jaw: log HF power, an EMG artifact, NOT EEG MI.
     Rejection checks run before detrending, including flat/disconnected channels.
     """
@@ -200,6 +234,8 @@ def extract_feature(window, name, config):
     raw = window.buffer[-count:, channels]
     if not np.isfinite(raw).all():
         return None, "non_finite"
+    if name == "eyes_closed":
+        return eyes_feature(raw, window.srate, config.artifact_uv)
     ranges = np.ptp(raw, axis=0)
     if np.any(ranges < 0.01):
         return None, "flat_channel"
@@ -207,15 +243,13 @@ def extract_feature(window, name, config):
         return None, "amplitude_artifact"
     x = detrend(raw, axis=0)
     freqs, psd = welch(x, fs=window.srate, nperseg=min(len(x), round(window.srate)), axis=0)
-    band = config.jaw_band if name == "jaw" else (8, 13) if name == "eyes_closed" else (8, 30)
+    band = config.jaw_band if name == "jaw" else (8, 30)
     mask = (freqs >= band[0]) & (freqs < band[1])
     power = psd[mask].mean(axis=0)
     if not np.isfinite(power).all() or np.any(power <= 1e-12):
         return None, "no_band_power"
     if name == "jaw":
         return float(np.log10(power.mean())), None
-    if name == "eyes_closed":
-        return float(np.log(power.mean())), None
     contrast = float(np.log(power[1]) - np.log(power[0]))
     return (contrast if name == "right_hand" else -contrast), None
 

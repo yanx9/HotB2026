@@ -75,7 +75,7 @@ Potok nie wie nic o grach: wysyła wszystkie sygnały, a każda gra wybiera, kt�
 
 | `name` | Zakres | Znaczenie |
 |---|---|---|
-| `eyes_closed` | 0–1 | wynik reaktywności alfa z tylnych kanałów |
+| `eyes_closed` | 0–1 | wynik reaktywności alfa: alfa względna z PO7 i PO8. Krótki artefakt (do 1,5 s) nie zmienia stanu; dopiero dłuższy daje `valid=0` |
 | `right_hand`, `left_hand` | 0–1 | wynik kalibrowanego kontrastu sensomotorycznego względem spoczynku |
 | `jaw` | 0–1 | kalibrowany wynik aktywności mięśniowej |
 | `<sygnał>_active` | 0/1 | aktywacja po histerezie i czasie potwierdzenia, dla powyższych czterech sygnałów |
@@ -97,7 +97,7 @@ Gry z pakietem `shared/bci-signals` przyjmują każdy sygnał o dowolnej nazwie 
 
 ## 3. Znaczniki: Unity → `bci/`
 
-Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Służą do oceny wyników gracza. Użycie do cięcia EEG na epoki P300 wymaga osobnego, zweryfikowanego toru synchronizacji i nagrania EEG, których ten potok jeszcze nie ma.
+Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Potok kładzie każdy znacznik na próbce EEG z chwili odbioru, w nagraniu sesji `data/raw/<sesja>_<czas>/` ([recording.md](recording.md)). Dokładność to kilka ms plus stałe ~40 ms Bluetooth opaski. Wystarcza to do oceny sygnałów trwających sekundy (oczy, szczęka). Cięcie na epoki P300 wymaga jeszcze pomiaru opóźnienia dźwięku w grze.
 
 - **Transport:** UDP na port `5006` komputera, z którego przychodzi sygnał BCI (dopóki nic nie przyszło: `127.0.0.1`). Ten sam format JSON, `type` = `"marker"`.
 - **Odbiór, jeden proces na porcie**:
@@ -138,6 +138,9 @@ Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w któr
 | `session_start` | 0 | start gry i każdy restart |
 | `eyes_closed` | 0 | gra uznała oczy za zamknięte |
 | `eyes_open` | czas zamknięcia w s | gra uznała oczy za otwarte |
+| `truth_closed` | 0 | gracz wcisnął spację: ma zamknięte oczy (prawda do oceny detektora, w obu trybach) |
+| `truth_open` | czas trzymania w s | gracz puścił spację |
+| `mode_keyboard` / `mode_eeg` | 0 | tryb sterowania oczami (F2); wysyłany też po każdym `session_start` |
 | `scan` | zasięg skanu w m | skan po otwarciu oczu |
 | `alert` | numer strażnika | strażnik usłyszał hałas |
 | `loot` | liczba zebranych | gracz zabrał łup |

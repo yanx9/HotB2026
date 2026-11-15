@@ -86,7 +86,8 @@ Strażnicy nie widzą, ale słyszą: kroki gracza (skradanie jest dużo cichsze)
 
 | Klawisz | Działanie |
 |---|---|
-| Spacja (trzymaj) | udaje sygnał `eyes_closed_active`; ekran gaśnie jak przy zamkniętych oczach |
+| Spacja (trzymaj) | „mam zamknięte oczy”: zawsze zapisuje prawdę do nagrania (`truth_closed` / `truth_open`); w trybie KLAWISZ albo bez potoku BCI steruje też grą |
+| F2 | tryb KLAWISZ (steruje spacja, EEG tylko się nagrywa) / EEG (steruje opaska) |
 | WASD, Shift | ruch, skradanie |
 | mysz (po kliknięciu w okno) albo Q / E | obrót |
 | R | restart po wpadce (albo zamknięcie oczu na 1,5 s) |
@@ -116,6 +117,7 @@ Ogród dźwięków (`unity/`) ma starszą, własną warstwę (`Brain/`) opartą 
 | `shared/bci-signals/` | pakiet Unity: warstwa sygnałów wspólna dla gier |
 | `docs/protocol.md` | kontrakt między `bci/` a grą: potok, porty, format wiadomości |
 | `docs/calibration.md` | obsługa kalibratora, profile, uruchomienie potoku i testy |
+| `docs/recording.md` | nagrywanie sesji, tryby Mroka, ocena detektora oczu (`evaluate_eyes.py`) |
 | `data/` | nagrania EEG (`data/raw/` nie trafia do repo) |
 
 ## Uruchomienie
@@ -152,6 +154,7 @@ python bci/bci_pipeline.py --host <IP komputera z grą>
 - **Bez profilu** wysyła heurystyki `focus`, `laterality` i `jaw` liczone względem ostatniej minuty. Wystarczą do ogrodu i precla; Mrok wymaga profilu z kalibracją oczu.
 - Okno g.Pype pokazuje EEG po filtrach i sygnały idące do gry. `--no-gui` je wyłącza (na macOS sterownik Unicorna potrzebuje pętli zdarzeń okna, więc tam zostawcie okno).
 - Znaczniki gier z portu 5006 zapisują się do `data/raw/bci_markers_*.jsonl`.
+- Każda sesja nagrywa się do `data/raw/<sesja>_<czas>/`: surowe i przefiltrowane EEG, znaczniki gry na próbkach EEG i wyjście detektora (`--session mrok_s01`, `--no-record` wyłącza). Kalibrator nagrywa się tak samo. Ocena: `python bci/evaluate_eyes.py <folder>`. Pełna instrukcja: [docs/recording.md](docs/recording.md).
 - Kilka gier naraz: `--target host:port` (każda gra na własnym porcie).
 
 **Kalibracja:** `bci/calibrate.py` ma cztery widoki: oczy zamknięte, wyobrażanie ruchu prawej dłoni, lewej dłoni oraz szczęka (EMG). Uruchamia w swoim procesie ten sam początek potoku (`HybridBlack → filtry`) i zapisuje wspólny dla wszystkich gier profil JSON. Opaskę trzyma naraz jeden proces: po kalibracji wybierzcie „Rozłącz” albo zamknijcie kalibrator, potem uruchomcie `bci_pipeline.py`. Pełna instrukcja: [docs/calibration.md](docs/calibration.md).

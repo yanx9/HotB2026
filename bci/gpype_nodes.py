@@ -263,6 +263,9 @@ class UdpJsonSender(gp.Sink):
         self._every = 25
         self._count = self._next_send = 0
         self._command_at = {}
+        # kanał 0/1 -> funkcja(stan), wołana w chwili wysłania zmiany do gry (pomiar opóźnień)
+        self.on_change = {}
+        self._last_state = {}
 
     def setup(self, data, port_context_in):
         context = port_context_in[PORT_IN]
@@ -302,6 +305,14 @@ class UdpJsonSender(gp.Sink):
         row = dict(zip(self.names, frame[-1]))
         for name, value in row.items():
             self.send(name, value)
+        for flag, callback in self.on_change.items():
+            state = row.get(flag, 0) >= 0.5
+            if state != self._last_state.get(flag, False):
+                self._last_state[flag] = state
+                try:
+                    callback(state)
+                except Exception:   # pomiar nie może zatrzymać wysyłania do gry
+                    pass
         now = time.monotonic()
         for flag, (command, value_name) in self.commands.items():
             if row.get(flag, 0) >= 0.5 and now >= self._command_at.get(flag, 0):
@@ -318,7 +329,7 @@ class PipelineSource:
     """
 
     def __init__(self, fake=False, serial=None, mains_hz=50, artifact_uv=200, jaw_band=(55, 95),
-                 clock=time.monotonic):
+                 clock=time.monotonic, record_session=None):
         self.clock = clock
         self.simulated = bool(fake)
         self.config = FeatureConfig(artifact_uv=artifact_uv, jaw_band=list(jaw_band),
@@ -328,6 +339,12 @@ class PipelineSource:
         self.node, filtered = build_front(self.pipeline, fake, serial, mains_hz, state="rest" if fake else None)
         self.tap = SampleTap()
         self.pipeline.connect(filtered, self.tap)
+        self.recorder = None
+        if record_session:   # surowe + przefiltrowane EEG i fazy kalibracji do data/raw/ (recording.py)
+            from recording import Recorder
+            self.recorder = Recorder(record_session, info={"kind": "calibration", "stream": self.stream,
+                                                           "feature_config": self.config.to_dict()})
+            self.recorder.attach(self.pipeline, self.node, filtered)
         self.last_timestamp = self.last_received = None
         self.gap = False
         self.resets = 0
@@ -366,8 +383,14 @@ class PipelineSource:
     def diagnostics(self):
         return {"frames": self.tap.frames, "timing_resets": self.resets}
 
+    def mark(self, name, value=0.0):
+        if self.recorder:
+            self.recorder.mark(name, value)
+
     def close(self):
         try:
             self.pipeline.stop()
         finally:
             self.pipeline.close()
+            if self.recorder:
+                self.recorder.close()

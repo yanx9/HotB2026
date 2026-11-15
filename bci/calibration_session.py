@@ -21,7 +21,9 @@ class Protocol:
             return cls(rest_s=4, active_s=2, settle_s=0.5)
         if name in ("left_hand", "right_hand"):
             return cls(trials=12, rest_s=6, active_s=6)
-        return cls()
+        # Oczy: reakcja na ton (~0,4 s) + narastanie / blokowanie alfy (~0,5-1 s); z 1 s pierwsze
+        # okno łapało jeszcze przejście i zaniżało różnicę między fazami.
+        return cls(settle_s=1.5)
 
     def validate(self, name):
         if not 6 <= self.trials <= 40:

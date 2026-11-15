@@ -40,7 +40,7 @@ from profiles import ProfileEngine, assert_profile_source, fit_calibration, load
 
 
 VIEWS = {
-    "eyes_closed": ("Zamykanie oczu", "Alfa potyliczna · 8–13 Hz",
+    "eyes_closed": ("Zamykanie oczu", "Alfa względna · PO7 / PO8",
                     "W spoczynku patrz na nieruchomy punkt. Na wysoki ton zamknij oczy, "
                     "na niski otwórz. Pozostań nieruchomo. To pomiar reaktywności alfa, nie poziomu relaksu.",
                     "ZAMKNIJ OCZY", "OTWÓRZ OCZY · SPOCZYNEK"),
@@ -104,7 +104,12 @@ class Worker(QObject):
             from gpype_nodes import PipelineSource
             self.source = PipelineSource(fake=options["fake"], serial=options["serial"] or None,
                                          mains_hz=options["mains_hz"], artifact_uv=options["artifact_uv"],
-                                         jaw_band=options["jaw_band"])
+                                         jaw_band=options["jaw_band"],
+                                         record_session=None if options.get("no_record")
+                                         else f"kalibracja_{options['subject'].strip()}")
+            if self.source.recorder:
+                self.source.recorder.info["profile"] = str(self.path)
+                print(f"Nagrywanie kalibracji: {self.source.recorder.folder}", flush=True)
             if self.path.exists():
                 self.profile = load_profile(self.path)
                 if self.profile["subject"] != options["subject"]:
@@ -157,6 +162,7 @@ class Worker(QObject):
             protocol = replace(Protocol.for_signal(name), trials=trials)
             self.session = CalibrationSession(name, self.source.config, now, protocol)
             self.recording = True
+            self.source.mark(f"cal_{name}_prepare")
             self.state.emit({"session": self.session.snapshot(now), "fresh": True, "preview": self.preview})
         except Exception as exc:
             self.error.emit(str(exc))
@@ -168,6 +174,8 @@ class Worker(QObject):
             self.session.phase = "cancelled"
             self.session.phase_end = local_clock()
             self.recording = False
+            if self.source:
+                self.source.mark(f"cal_{self.session.name}_cancel", self.session.trial)
             self.cue.emit("rest")
             self.state.emit({"session": self.session.snapshot(local_clock()), "fresh": True, "preview": self.preview})
 
@@ -197,6 +205,7 @@ class Worker(QObject):
                 self.cancel()
                 self.error.emit("Utrata danych EEG. Próba przerwana; poprzednie parametry nie zostały nadpisane.")
             if self.recording and self.session.advance(now):
+                self.source.mark(f"cal_{self.session.name}_{self.session.phase}", self.session.trial)
                 self.cue.emit(self.session.phase)
                 if self.session.completed:
                     self.recording = False
@@ -219,22 +228,43 @@ class Worker(QObject):
             self.error.emit(f"Błąd akwizycji lub zapisu: {exc}. Połącz źródło ponownie.")
 
 
+def cue_wave(freq, pulses=1, pulse_s=0.35, gap_s=0.12, rate=44100, level=0.85):
+    """Głośny, wyraźny sygnał: ton z harmonicznymi (1-5) i płaską obwiednią z 10 ms narastania.
+
+    Czysta sinusoida 330 Hz z obwiednią Hanninga była na laptopie prawie niesłyszalna: małe
+    głośniki słabo oddają niskie tony, a okno Hanninga daje pełną głośność tylko przez ułamek
+    czasu. Harmoniczne przenoszą energię w pasmo 1-3 kHz, które każdy głośnik odtwarza.
+    """
+    t = np.arange(int(rate * pulse_s)) / rate
+    tone = sum(np.sin(2 * np.pi * k * freq * t) / k for k in range(1, 6))
+    ramp = np.minimum(1, np.minimum(t, t[-1] - t) / 0.010)
+    pulse = tone / np.abs(tone).max() * ramp
+    gap = np.zeros(int(rate * gap_s))
+    signal = np.concatenate([np.concatenate([pulse, gap]) for _ in range(pulses)])[:-len(gap)]
+    return level * signal
+
+
+# zadanie: jeden długi wysoki ton; spoczynek: dwa krótkie niskie (rozpoznawalne też po rytmie)
+CUES = {"active": dict(freq=880, pulses=1, pulse_s=0.45),
+        "rest": dict(freq=440, pulses=2, pulse_s=0.16),
+        "complete": dict(freq=1175, pulses=3, pulse_s=0.12, gap_s=0.08)}
+
+
 class Sounds(QObject):
     def __init__(self, parent):
         super().__init__(parent)
         self.directory = tempfile.TemporaryDirectory(prefix="bci-cues-")
         self.effects = {}
-        for name, freq in (("active", 660), ("rest", 330), ("complete", 880)):
-            rate = 44100
-            t = np.arange(int(rate * 0.25)) / rate
-            signal = 0.18 * np.sin(2 * np.pi * freq * t) * np.hanning(len(t))
+        rate = 44100
+        for name, params in CUES.items():
+            signal = cue_wave(rate=rate, **params)
             path = Path(self.directory.name) / f"{name}.wav"
             with wave.open(str(path), "wb") as wav:
                 wav.setparams((1, 2, rate, 0, "NONE", "not compressed"))
                 wav.writeframes((signal * 32767).astype("<i2").tobytes())
             effect = QSoundEffect(parent)
             effect.setSource(QUrl.fromLocalFile(str(path)))
-            effect.setVolume(0.7)
+            effect.setVolume(1.0)
             self.effects[name] = effect
 
     @Slot(str)
@@ -267,7 +297,7 @@ class CalibrationView(QWidget):
         self.prompt.setMinimumHeight(80)
         self.prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.prompt)
-        self.countdown = QLabel("Wysoki ton: zadanie · niski ton: spoczynek")
+        self.countdown = QLabel("Wysoki, długi ton: zadanie · dwa niskie, krótkie: spoczynek")
         layout.addWidget(self.countdown)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -346,6 +376,7 @@ class CalibrationApp(QMainWindow):
         form = QFormLayout()
         self.fake = QCheckBox("Syntetyczne EEG (bez opaski)")
         self.fake.setChecked(args.fake)
+        self.no_record = getattr(args, "no_record", False)
         self.serial = QLineEdit(args.serial or "")
         self.serial.setPlaceholderText("numer seryjny Unicorna (puste = ostatnio używany / jedyny)")
         self.mains = QComboBox()
@@ -385,7 +416,7 @@ class CalibrationApp(QMainWindow):
                                choose, self.artifact, self.jaw_band]
 
         row = QHBoxLayout()
-        self.audio_confirm = QCheckBox("Słyszę oba tony i znam ich znaczenie")
+        self.audio_confirm = QCheckBox("Słyszę oba sygnały i znam ich znaczenie")
         self.audio_confirm.toggled.connect(self.update_buttons)
         self.sounds = Sounds(self)
         self.worker.cue.connect(self.sounds.play)
@@ -434,7 +465,7 @@ class CalibrationApp(QMainWindow):
 
     def test_sound(self):
         self.sounds.play("active")
-        QTimer.singleShot(700, lambda: self.sounds.play("rest"))
+        QTimer.singleShot(1000, lambda: self.sounds.play("rest"))
 
     def select_view(self, index):
         self.stack.setCurrentIndex(index)
@@ -460,7 +491,8 @@ class CalibrationApp(QMainWindow):
             self.update_buttons()
             self.connect_requested.emit({"fake": self.fake.isChecked(), "serial": self.serial.text().strip(),
                 "mains_hz": self.mains.currentData(), "subject": self.subject.text().strip(),
-                "path": self.profile_path.text(), "artifact_uv": self.artifact.value(), "jaw_band": band})
+                "path": self.profile_path.text(), "artifact_uv": self.artifact.value(), "jaw_band": band,
+                "no_record": self.no_record})
         except ValueError as exc:
             self.on_error(str(exc))
 
@@ -556,6 +588,8 @@ def parser():
     cli.add_argument("--mains", type=int, choices=(50, 60), default=50, help="częstotliwość sieci do filtru")
     cli.add_argument("--artifact-uv", type=float, default=200)
     cli.add_argument("--jaw-band", default="55,95")
+    cli.add_argument("--no-record", action="store_true",
+                     help="nie zapisuj surowego EEG (domyślnie: data/raw/kalibracja_<osoba>_<czas>/)")
     return cli
 
 

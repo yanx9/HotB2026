@@ -167,6 +167,39 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(session.trials[0]["rest"], [])
         self.assertFalse(session.completed)
 
+    def test_eyes_feature_survives_one_bad_channel_and_electrode_gain(self):
+        cfg = FeatureConfig()
+        x = DemoSource().samples(np.arange(500) / 250, "eyes_closed")
+        window = Window(250, 8)
+        window.push(x)
+        clean, reason = extract_feature(window, "eyes_closed", cfg)
+        self.assertIsNone(reason)
+        window.push(x * 3)   # worse contact = larger amplitude; a ratio of powers does not move
+        self.assertAlmostEqual(extract_feature(window, "eyes_closed", cfg)[0], clean, places=6)
+        loose = x.copy()
+        loose[:, cfg.posterior_channels[0]] += 300 * np.sign(np.sin(2 * np.pi * .7 * np.arange(500) / 250))
+        window.push(loose)
+        value, reason = extract_feature(window, "eyes_closed", cfg)
+        self.assertIsNone(reason)          # the other posterior channel carries the window
+        self.assertGreater(value, record_simulated("eyes_closed")["rest_center"])
+
+    def test_eyes_detector_holds_its_decision_through_a_short_artifact(self):
+        detector = Detector(self.models["eyes_closed"])
+        m = detector.model
+        for now in np.arange(0, 1.5, .1):
+            detector.update(m["active_center"], now)
+        self.assertTrue(detector.active)
+        # a blink / head movement: windows rejected for less than hold_s -> still closed, still valid
+        self.assertEqual(detector.update(None, 1.4 + m["hold_s"] - .1)[1:], (True, True))
+        # rejected for longer -> reset, invalid
+        self.assertEqual(detector.update(None, 1.4 + m["hold_s"] + .2)[1:], (False, False))
+
+    def test_profile_from_previous_feature_version_is_rejected(self):
+        p = copy.deepcopy(self.profile)
+        p["feature_version"] = "unicorn-spectral-v1"
+        with self.assertRaises(ValueError):
+            ProfileEngine(p)
+
     def test_hysteresis_and_dwell(self):
         detector = Detector(self.models["jaw"])
         m = detector.model

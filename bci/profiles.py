@@ -16,7 +16,16 @@ import numpy as np
 from processing import FeatureConfig, SIGNALS, extract_feature, feature_window
 
 SCHEMA_VERSION = 1
-FEATURE_VERSION = "unicorn-spectral-v1"
+# v2: oczy = alfa względna z PO7/PO8 z oceną każdego kanału osobno; detektory mają hold_s.
+# Profile v1 mają inną skalę cechy oczu, więc wymagają ponownej kalibracji.
+FEATURE_VERSION = "unicorn-spectral-v2"
+
+# (czas potwierdzenia, wygładzanie, podtrzymanie) w sekundach, dla każdego sygnału.
+# Podtrzymanie: przez tyle sekund odrzuconych okien (artefakt, zaciśnięta szczęka) detektor
+# trzyma ostatnią decyzję zamiast spadać do zera. Dla oczu ważne: w Mroku spadek do zera
+# znaczyłby "oczy otwarte" i przedwczesny skan po każdym mrugnięciu albo poruszeniu głową.
+TIMING = {"jaw": (0.2, 0.08, 0.0), "eyes_closed": (0.3, 0.4, 1.5),
+          "right_hand": (0.35, 0.2, 0.0), "left_hand": (0.35, 0.2, 0.0)}
 
 
 def utc_now():
@@ -78,8 +87,8 @@ def fit_calibration(name, trials, protocol):
                "Rozdzielenie zadania od spoczynku jest zbyt słabe w próbach kontrolnych. Nie używamy tego detektora.",
         threshold_raw=enter, release_raw=release, scale=delta,
         threshold=float(np.clip((enter - rest_center) / delta, 0, 1)),
-        release_threshold=0.3, dwell_s=0.2 if name == "jaw" else 0.35,
-        smoothing_s=0.08 if name == "jaw" else 0.2,
+        release_threshold=0.3, dwell_s=TIMING[name][0], smoothing_s=TIMING[name][1],
+        hold_s=TIMING[name][2],
         validation={"method": "chronological_holdout_paired_trials", "balanced_accuracy": accuracy,
                     "sensitivity": sensitivity, "specificity": specificity,
                     "window_balanced_accuracy": window_accuracy,
@@ -104,13 +113,13 @@ def validate_profile(profile):
         if model["status"] != "ready":
             continue
         for key in ("rest_center", "active_center", "scale", "threshold_raw", "release_raw",
-                    "threshold", "release_threshold", "dwell_s", "smoothing_s", "window_s"):
+                    "threshold", "release_threshold", "dwell_s", "smoothing_s", "hold_s", "window_s"):
             if not isinstance(model.get(key), (int, float)) or not math.isfinite(model[key]):
                 raise ValueError(f"Niepoprawny parametr {name}.{key}.")
         if (model["scale"] <= 0 or model["active_center"] <= model["rest_center"]
                 or not model["rest_center"] < model["release_raw"] < model["threshold_raw"]
                 or not 0 <= model["release_threshold"] < model["threshold"] <= 1
-                or model["dwell_s"] < 0 or model["smoothing_s"] < 0
+                or model["dwell_s"] < 0 or model["smoothing_s"] < 0 or not 0 <= model["hold_s"] <= 5
                 or model["window_s"] != feature_window(name)):
             raise ValueError(f"Niespójne progi lub okno {name}.")
     return config
@@ -153,10 +162,14 @@ class Detector:
         self.last_time = None
 
     def update(self, raw, now):
-        if raw is None:
-            self.reset()
-            return 0.0, False
+        """-> (value, active, valid). A rejected window (raw None) keeps the last decision
+        for up to hold_s after the last accepted one; after that the detector resets."""
         m = self.model
+        if raw is None:
+            if self.last_time is not None and now - self.last_time <= m.get("hold_s", 0.0):
+                return self.value, self.active, True
+            self.reset()
+            return 0.0, False, False
         target = float(np.clip((raw - m["rest_center"]) / m["scale"], 0, 1))
         dt = 0.1 if self.last_time is None else max(0, now - self.last_time)
         self.last_time = now
@@ -172,7 +185,7 @@ class Detector:
                 self.active = True
         else:
             self.since = None
-        return self.value, self.active
+        return self.value, self.active, True
 
 
 class ProfileEngine:
@@ -188,12 +201,15 @@ class ProfileEngine:
         # A calibrated jaw event gates motor/eye inference so EMG isn't rewarded as MI.
         for name in ("jaw", "eyes_closed", "right_hand", "left_hand"):
             detector = self.detectors.get(name)
+            if detector and not fresh:
+                detector.reset()   # no data at all: never hold a decision over a dropout
             raw, reason = (extract_feature(window, name, self.config) if fresh and detector else
                            (None, "stale" if not fresh else "uncalibrated"))
             if name != "jaw" and results["jaw"]["active"]:
                 raw, reason = None, "jaw_artifact"
-            value, active = detector.update(raw, now) if detector else (0.0, False)
-            results[name] = {"value": value, "active": active, "valid": raw is not None, "reason": reason}
+            value, active, valid = detector.update(raw, now) if detector else (0.0, False, False)
+            results[name] = {"value": value, "active": active, "valid": valid, "reason": reason,
+                             "held": valid and raw is None}
         right, left = results["right_hand"], results["left_hand"]
         # One binary model is not enough to infer a signed left/right axis.
         lateral_valid = right["valid"] and left["valid"] and not (right["active"] and left["active"])
