@@ -5,6 +5,7 @@ using UnityEngine.InputSystem;
 namespace Mrok.World
 {
     // Chodzenie z pierwszej osoby: WASD, mysz albo Q / E do obracania, Shift do skradania.
+    // Na padzie: lewa gałka ruch, prawa obrót, B albo lewy bumper skradanie.
     // Każdy krok zgłasza hałas o zasięgu zależnym od tempa.
     public class Player : MonoBehaviour
     {
@@ -12,6 +13,7 @@ namespace Mrok.World
         const float WalkNoise = 6f, SneakNoise = 3f, SprintNoise = 10f;   // z jak daleka słychać krok
         public const float Height = 1.7f;
         const float StepLength = 1.3f;
+        const float StickTurn = 150f, StickTilt = 90f, StickDead = 0.15f;   // obrót prawą gałką w stopniach na sekundę
 
         public Action<float> Stepped;   // argument: zasięg hałasu
         public bool frozen;
@@ -41,6 +43,10 @@ namespace Mrok.World
             yaw = facing;
         }
 
+        // martwa strefa gałki: mały luz nie obraca ani nie przesuwa gracza
+        static Vector2 Stick(Vector2 value) =>
+            value.magnitude < StickDead ? Vector2.zero : value.normalized * ((value.magnitude - StickDead) / (1f - StickDead));
+
         public void Teleport(Vector3 position, float facing)
         {
             body.enabled = false;
@@ -69,6 +75,13 @@ namespace Mrok.World
                 if (keyboard.qKey.isPressed) yaw -= 110f * dt;
                 if (keyboard.eKey.isPressed) yaw += 110f * dt;
             }
+            var gamepad = Gamepad.current;
+            if (gamepad != null)
+            {
+                Vector2 look = Stick(gamepad.rightStick.ReadValue());
+                yaw += look.x * StickTurn * dt;
+                pitch = Mathf.Clamp(pitch - look.y * StickTilt * dt, -80f, 80f);
+            }
             transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             eyes.localRotation = Quaternion.Euler(pitch, 0f, 0f);
 
@@ -80,6 +93,13 @@ namespace Mrok.World
                 float z = (keyboard.wKey.isPressed ? 1f : 0f) - (keyboard.sKey.isPressed ? 1f : 0f);
                 move = Vector3.ClampMagnitude(transform.right * x + transform.forward * z, 1f);
                 sneak = keyboard.leftShiftKey.isPressed;
+            }
+
+            if (gamepad != null && !frozen)
+            {
+                Vector2 stick = Stick(gamepad.leftStick.ReadValue());
+                move = Vector3.ClampMagnitude(move + transform.right * stick.x + transform.forward * stick.y, 1f);
+                sneak |= gamepad.buttonEast.isPressed || gamepad.leftShoulder.isPressed;
             }
 
             Vector3 before = transform.position;

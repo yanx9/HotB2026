@@ -1,4 +1,5 @@
 numpy
 scipy
+matplotlib   # wykresy z evaluate.py
 # Potok g.Pype, okna (PySide6), sterownik Unicorna i zapis nagrań (h5py). Python 3.10 lub nowszy.
 gpype[gui,devices,formats]>=4.2,<5

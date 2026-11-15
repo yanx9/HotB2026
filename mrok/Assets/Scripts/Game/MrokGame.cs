@@ -68,12 +68,15 @@ namespace Mrok.Game
 
         // Tryb sterowania oczami (F2). W obu trybach spacja to "prawda": gracz trzyma ją, gdy
         // ma zamknięte oczy, a gra wysyła znaczniki truth_closed / truth_open do nagrania EEG.
+        // Tak samo F to prawda o zaciśniętej szczęce: truth_jaw_on / truth_jaw_off, a reakcję gry
+        // zapisują znaczniki sprint_on / sprint_off (odpowiedniki eyes_closed / eyes_open).
         //   KLAWISZ: grą steruje spacja; potok BCI tylko nagrywa (zbieranie danych do strojenia).
         //   EEG:     grą steruje sygnał eyes_closed_active; spacja niczego w grze nie zmienia.
         //            Bez danych z potoku spacja steruje jak dawniej, żeby dało się grać bez opaski.
         static bool keyboardMode;
         KeyboardSignalSource keyboardSource;
-        float truthAt;
+        float truthAt, sprintTruthAt, sprintAt;
+        bool truthEyes, truthJaw;
 
         AudioSource effects;
         AudioClip ping, tick, step, pickup, caught, win, deny;
@@ -215,7 +218,9 @@ namespace Mrok.Game
             eyesClosed = false;
             title.text = Spaced(level.title);
             body.text = string.Join("\n", level.intro);
-            footer.text = "WASD move     Clench jaw to sprint     Shift sneak     Hold click to throw     Esc doors";
+            footer.text = Gamepad.current != null
+                ? "Left stick move     Right stick look     Clench jaw to sprint     B sneak     Hold RT to throw     Select doors"
+                : "WASD move     Clench jaw to sprint     Shift sneak     Hold click to throw     Esc doors";
             curtain.color = Color.black;
             curtainTarget = 1f;
             loadUntil = Time.time + (level.hub ? 2.5f : 4.5f);
@@ -433,6 +438,14 @@ namespace Mrok.Game
 
         void UpdateKeys()
         {
+            // pad: Start ponawia poziom po jego zakończeniu, Select wraca do sali z drzwiami
+            var gamepad = Gamepad.current;
+            if (gamepad != null)
+            {
+                if (gamepad.startButton.wasPressedThisFrame && (phase == Phase.Caught || phase == Phase.Won)) built = false;
+                if (gamepad.selectButton.wasPressedThisFrame && !Level.Current.hub) Open(Levels.Hub);
+            }
+
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
             if (keyboard.f1Key.wasPressedThisFrame)
@@ -473,23 +486,43 @@ namespace Mrok.Game
         {
             var keyboard = Keyboard.current;
 
-            // prawda do nagrania: spacja wciśnięta = gracz ma zamknięte oczy (w obu trybach)
-            bool space = keyboard != null && keyboard.spaceKey.isPressed;
-            if (keyboard != null && keyboard.spaceKey.wasPressedThisFrame)
-            {
-                truthAt = Time.time;
-                MarkerSender.Send("truth_closed");
-            }
-            if (keyboard != null && keyboard.spaceKey.wasReleasedThisFrame)
-                MarkerSender.Send("truth_open", Time.time - truthAt);
+            var gamepad = Gamepad.current;
 
-            // w trybie EEG spacja nie może podmieniać sygnału z opaski, chyba że potoku nie ma
-            keyboardSource.enabled = keyboardMode || !BridgeAlive;
-            bool closed = keyboardMode ? space : bindings.Held("eyes");
+            // prawda do nagrania: spacja albo A na padzie = gracz ma zamknięte oczy (w obu trybach)
+            bool space = (keyboard != null && keyboard.spaceKey.isPressed) || (gamepad != null && gamepad.buttonSouth.isPressed);
+            if (space != truthEyes)
+            {
+                if (space) truthAt = Time.time;
+                MarkerSender.Send(space ? "truth_closed" : "truth_open", space ? 0f : Time.time - truthAt);
+                truthEyes = space;
+            }
+
+            // to samo dla sprintu: klawisz z powiązania (F) albo lewy spust = gracz zaciska szczękę
+            bool clench = gamepad != null && gamepad.leftTrigger.isPressed;
+            if (keyboard != null && Enum.TryParse(bindings.Get("sprint")?.key, true, out Key sprintKey) && sprintKey != Key.None)
+                clench |= keyboard[sprintKey].isPressed;
+            if (clench != truthJaw)
+            {
+                if (clench) sprintTruthAt = Time.time;
+                MarkerSender.Send(clench ? "truth_jaw_on" : "truth_jaw_off", clench ? 0f : Time.time - sprintTruthAt);
+                truthJaw = clench;
+            }
+
+            // w trybie EEG klawisze nie mogą podmieniać sygnału z opaski, chyba że potoku nie ma;
+            // pad nie przechodzi przez KeyboardSignalSource, więc jego przyciski dokładamy tutaj
+            bool keys = keyboardMode || !BridgeAlive;
+            keyboardSource.enabled = keys;
+            bool closed = keyboardMode ? space : bindings.Held("eyes") || (keys && space);
 
             // Sprint: zaciśnięta szczęka, zero-jedynkowo. Mięśnie szczęki zakłócają też EEG nad
             // potylicą, więc w trakcie biegu sygnał z opaski nie może zacząć "zamykać oczu".
-            player.sprint = bindings.Held("sprint");
+            bool sprinting = bindings.Held("sprint") || (keys && clench);
+            if (sprinting != player.sprint)
+            {
+                if (sprinting) sprintAt = Time.time;
+                MarkerSender.Send(sprinting ? "sprint_on" : "sprint_off", sprinting ? 0f : Time.time - sprintAt);
+            }
+            player.sprint = sprinting;
             if (!keyboardMode && BridgeAlive && player.sprint && !eyesClosed) closed = false;
             blackout.enabled = closed;
 
@@ -624,9 +657,13 @@ namespace Mrok.Game
         void UpdateThrow()
         {
             var mouse = Mouse.current;
+            var gamepad = Gamepad.current;
             bool locked = Cursor.lockState == CursorLockMode.Locked;
-            // kliknięcie, które dopiero łapie kursor, nie zaczyna rzutu
-            if (mouse != null && mouse.leftButton.wasPressedThisFrame && lockedBefore && stones > 0 && !flying)
+            // lewy przycisk myszy albo prawy spust pada; kliknięcie, które dopiero łapie kursor, nie zaczyna rzutu
+            bool pressed = (mouse != null && mouse.leftButton.wasPressedThisFrame && lockedBefore)
+                        || (gamepad != null && gamepad.rightTrigger.wasPressedThisFrame);
+            bool holding = (mouse != null && mouse.leftButton.isPressed) || (gamepad != null && gamepad.rightTrigger.isPressed);
+            if (pressed && stones > 0 && !flying)
             {
                 aiming = true;
                 aimAt = Time.time;
@@ -641,7 +678,7 @@ namespace Mrok.Game
                 Vector3 from = eyes.position + eyes.forward * 0.3f - eyes.up * 0.15f + eyes.right * 0.15f;
                 Vector3 velocity = direction * Mathf.Lerp(ThrowSlow, ThrowFast, swing);
 
-                if (mouse == null || !mouse.leftButton.isPressed)
+                if (!holding)
                 {
                     aiming = false;
                     flying = true;

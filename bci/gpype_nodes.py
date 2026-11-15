@@ -19,7 +19,7 @@ import numpy as np
 from gpype.common._private import channels as channel_info
 
 from calibration_session import DemoSource
-from processing import (FeatureConfig, FocusMeter, JawMeter, LateralityMeter, RATE_HZ, SIGNALS,
+from processing import (FeatureConfig, FocusMeter, JawButton, LateralityMeter, RATE_HZ, SIGNALS,
                         UNICORN_LABELS, Window)
 from profiles import ProfileEngine
 
@@ -149,9 +149,6 @@ class SignalClassifier(gp.IONode):
     się już przy lekkim zaciśnięciu, bo gry używają go jako przycisku, nie jako miary siły.
     """
 
-    JAW_ON, JAW_OFF = 0.2, 0.08   # skala JawMeter: 0 to 3x mocy spoczynkowej, 1 to 30x
-    JAW_DWELL = 2                 # tyle kolejnych odczytów (0,2 s) ponad progiem, żeby pominąć pojedyncze trzaski
-
     def __init__(self, profile=None, **kwargs):
         super().__init__(**kwargs)
         self.engine = ProfileEngine(profile) if profile else None
@@ -166,8 +163,7 @@ class SignalClassifier(gp.IONode):
             self.names = ["laterality", "laterality_valid", "jaw", "jaw_active", "jaw_valid"]
             self.meters = [LateralityMeter(config.c3, config.c4, config.artifact_uv)]
         # heurystyka szczęki zastępuje brakujący detektor z kalibracji
-        self.jaw = None if self.engine and "jaw" in self.engine.detectors else JawMeter(config.eeg_channels, config.jaw_band)
-        self._jaw_active, self._jaw_above = False, 0
+        self.jaw = None if self.engine and "jaw" in self.engine.detectors else JawButton(config.eeg_channels, config.jaw_band)
         self.names += ["focus", "focus_valid"]
         self.results = {}
         self._values = np.zeros(len(self.names))
@@ -211,15 +207,8 @@ class SignalClassifier(gp.IONode):
                 values[meter.name + "_valid"] = float(value is not None)
             clench = False
         if self.jaw:
-            value = self.jaw.compute(self._window)
-            level = 0.0 if value is None else value
-            self._jaw_above = self._jaw_above + 1 if level >= self.JAW_ON else 0
-            if self._jaw_active:
-                self._jaw_active = level >= self.JAW_OFF
-            elif self._jaw_above >= self.JAW_DWELL:
-                self._jaw_active = True
-            clench = self._jaw_active
-            values.update(jaw=level, jaw_active=float(clench), jaw_valid=float(value is not None))
+            level, clench, valid = self.jaw.update(self._window)
+            values.update(jaw=level, jaw_active=float(clench), jaw_valid=float(valid))
         # focus pozostaje heurystyką także z profilem; zaciśnięta szczęka go unieważnia
         value = None if clench else self.focus.compute(self._window)
         values["focus"] = self.focus.value if value is None else value

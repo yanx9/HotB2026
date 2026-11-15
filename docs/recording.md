@@ -21,7 +21,7 @@ Znacznik z gry trafia na próbkę EEG z chwili, w której potok go odebrał. Na 
 | `eeg_<czas>.h5` | zbiór `data`: wiersz 0 = czas [s], potem kolumny z `session.json` → `columns` |
 | `events.csv` | każde zdarzenie: nazwa, kod, wartość (np. zasięg skanu), czas gry, czas odbioru |
 | `session.json` | kolumny, kody znaczników, profil, filtry, ustawienia cech, rodzaj sesji |
-| `eval_eyes.json`, `eval_eyes.png` | wynik `evaluate_eyes.py` (po ocenie) |
+| `eval_eyes.json`, `eval_eyes.png`, `eval_jaw.json`, `eval_jaw.png` | wynik `evaluate.py` (po ocenie) |
 
 Kolumny w `eeg_*.h5`:
 
@@ -38,7 +38,7 @@ Pliki zapisują się na bieżąco i są czytelne także po nagłym zamknięciu p
 
 ## Tryby Mroka (F2)
 
-**Spacja zawsze oznacza prawdę: trzymaj ją, gdy masz zamknięte oczy.** Gra wysyła wtedy znaczniki `truth_closed` i `truth_open`. Tryb decyduje tylko o tym, co steruje grą.
+**Spacja zawsze oznacza prawdę: trzymaj ją, gdy masz zamknięte oczy.** Gra wysyła wtedy znaczniki `truth_closed` i `truth_open`. Tak samo **F trzymaj, gdy zaciskasz szczękę** (`truth_jaw_on` / `truth_jaw_off`). Tryb decyduje tylko o tym, co steruje grą.
 
 | Tryb | Grą steruje | Po co |
 |---|---|---|
@@ -79,10 +79,25 @@ Jeśli Unity działa na innym komputerze, dodaj `--host <IP komputera z grą>`. 
 **6. Ocena:**
 
 ```sh
-python bci/evaluate_eyes.py data/raw/mrok_s01_<czas>
-python bci/evaluate_eyes.py data/raw/mrok_s01_<czas> --profile data/calibration/inny.json
-python bci/evaluate_eyes.py data/raw/kalibracja_s01_<czas> --profile data/calibration/s01.json
+python bci/evaluate.py data/raw/mrok_s01_<czas>                    # oczy i szczęka
+python bci/evaluate.py data/raw/mrok_s01_<czas> --signal jaw       # albo --signal eyes
+python bci/evaluate.py data/raw/mrok_s01_<czas> --profile data/calibration/inny.json
+python bci/evaluate.py data/raw/kalibracja_s01_<czas> --profile data/calibration/s01.json
 ```
+
+Oczy i szczękę ocenia ten sam kod i raport ma te same pola. Różnią się tylko nazwy znaczników i skala czasu zdarzeń:
+
+| | oczy | szczęka |
+|---|---|---|
+| prawda (klawisz w grze) | spacja: `truth_closed` / `truth_open` | F: `truth_jaw_on` / `truth_jaw_off` |
+| decyzja potoku | `out_eyes_closed_active` | `out_jaw_active` |
+| potok wysłał zmianę | `pipe_eyes_closed` / `pipe_eyes_open` | `pipe_jaw_on` / `pipe_jaw_off` |
+| reakcja gry | `eyes_closed` / `eyes_open` | `sprint_on` / `sprint_off` |
+| najkrótsze liczone zdarzenie | 1 s | 0,5 s |
+| wynik | `eval_eyes.json`, `eval_eyes.png` | `eval_jaw.json`, `eval_jaw.png` |
+
+W raporcie `closures` to zdarzenia „włączone” (zamknięcia oczu albo zaciśnięcia), a `close` / `open` to włączenie / wyłączenie. `evaluate_eyes.py` zostało jako skrót do `evaluate.py --signal eyes`. Test całej ścieżki bez opaski: `python bci/tests/integration_evaluate.py`.
+
 
 Pierwsze polecenie ocenia decyzje, które zapadły na żywo. Drugie liczy detektor od nowa z kolumn `flt_*` tym samym kodem, którego używa potok, np. dla nowego profilu albo po zmianie w `processing.py`. Trzecie ocenia nagranie kalibracji, a prawdą są wtedy fazy kalibracji.
 

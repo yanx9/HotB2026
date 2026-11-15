@@ -124,12 +124,14 @@ W czasie rozgrywki nie ma napisów. Tekst jest tylko na ekranie ładowania i po 
 | Shift | skradanie |
 | lewy przycisk myszy (trzymaj i puść) | rzut kamieniem |
 | Spacja (trzymaj) | „mam zamknięte oczy”: zawsze zapisuje prawdę do nagrania (`truth_closed` / `truth_open`); w trybie KEY albo bez potoku BCI steruje też grą |
-| F | sprint z klawiatury (w trybie KEY albo bez potoku BCI) |
+| F (trzymaj) | „zaciskam szczękę”: zawsze zapisuje prawdę do nagrania (`truth_jaw_on` / `truth_jaw_off`); w trybie KEY albo bez potoku BCI włącza też sprint |
 | F2 | tryb KEY (steruje klawiatura, EEG tylko się nagrywa) / EEG (steruje opaska) |
 | F1 | napisy diagnostyczne (sygnały, tryb, klatki/s), domyślnie ukryte |
 | Esc | powrót do sali z drzwiami |
 | 1 / 2 / 3 | w sali z drzwiami: od razu otwiera poziom |
 | R | ponowienie po wpadce (albo zamknięcie oczu na 1,5 s) |
+
+Pad: lewa gałka ruch, prawa gałka obrót, **prawy spust (trzymaj i puść) rzut kamieniem**, B albo lewy bumper skradanie, A jak spacja (zamknięte oczy), lewy spust jak F (zaciśnięta szczęka), Start ponowienie, Select powrót do sali z drzwiami.
 
 ## Wspólna warstwa sygnałów (`shared/bci-signals`)
 
@@ -154,7 +156,7 @@ Ogród dźwięków (`unity/`) ma starszą, własną warstwę (`Brain/`) opartą 
 | `shared/bci-signals/` | pakiet Unity: warstwa sygnałów wspólna dla gier |
 | `docs/protocol.md` | kontrakt między `bci/` a grą: potok, porty, format wiadomości |
 | `docs/calibration.md` | obsługa kalibratora, profile, uruchomienie potoku i testy |
-| `docs/recording.md` | nagrywanie sesji, tryby Mroka, ocena detektora oczu (`evaluate_eyes.py`) |
+| `docs/recording.md` | nagrywanie sesji, tryby Mroka, ocena detektorów oczu i szczęki (`evaluate.py`) |
 | `data/` | nagrania EEG (`data/raw/` nie trafia do repo) |
 
 ## Uruchomienie

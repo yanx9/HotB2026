@@ -135,6 +135,31 @@ class JawMeter:
         return self.value
 
 
+class JawButton:
+    """Nieskalibrowana szczęka jako przycisk: (poziom 0-1, zaciśnięta, ważny).
+
+    Włącza się już przy lekkim zaciśnięciu, bo gry używają jej zero-jedynkowo, nie jako miary
+    siły. Ten sam kod liczy sygnał w potoku i przy odtwarzaniu nagrania w evaluate.py.
+    """
+
+    ON, OFF = 0.2, 0.08   # skala JawMeter: 0 to 3x mocy spoczynkowej, 1 to 30x
+    DWELL = 2             # tyle kolejnych odczytów (0,2 s) ponad progiem, żeby pominąć pojedyncze trzaski
+
+    def __init__(self, channels, band):
+        self.meter = JawMeter(channels, band)
+        self.active, self.above = False, 0
+
+    def update(self, window):
+        value = self.meter.compute(window)
+        level = 0.0 if value is None else value
+        self.above = self.above + 1 if level >= self.ON else 0
+        if self.active:
+            self.active = level >= self.OFF
+        elif self.above >= self.DWELL:
+            self.active = True
+        return level, self.active, value is not None
+
+
 UNICORN_LABELS = ("Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8")
 SIGNALS = ("eyes_closed", "right_hand", "left_hand", "jaw")
 

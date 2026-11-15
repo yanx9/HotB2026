@@ -36,6 +36,9 @@ MARKER_CODES = {
     "caught": 7, "win": 8, "mode_keyboard": 9, "mode_eeg": 10,
     "truth_closed": 20, "truth_open": 21,                        # spacja w Mroku: prawdziwy stan oczu
     "pipe_eyes_closed": 11, "pipe_eyes_open": 12,                # potok WYSŁAŁ zmianę do gry (pomiar opóźnień)
+    # szczęka, ten sam zestaw co dla oczu: reakcja gry, prawda z klawisza F, chwila wysłania z potoku
+    "sprint_on": 13, "sprint_off": 14, "pipe_jaw_on": 15, "pipe_jaw_off": 16,
+    "truth_jaw_on": 22, "truth_jaw_off": 23,
 }
 # fazy kalibratora: cal_<sygnał>_<faza>, np. cal_eyes_closed_active = 32; wartość = numer próby
 CAL_PHASES = ("prepare", "rest", "active", "complete", "cancel")

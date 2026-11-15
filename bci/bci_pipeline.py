@@ -153,6 +153,8 @@ def main():
             # chwila wysłania decyzji do gry; z reakcją gry rozdziela opóźnienie potoku i Unity
             sender.on_change["eyes_closed_active"] = lambda closed: recorder.mark(
                 "pipe_eyes_closed" if closed else "pipe_eyes_open")
+        if "jaw_active" in classifier.names:
+            sender.on_change["jaw_active"] = lambda on: recorder.mark("pipe_jaw_on" if on else "pipe_jaw_off")
         if args.no_markers:
             print("Uwaga: --no-markers - nagranie nie będzie miało znaczników z gry.")
 
