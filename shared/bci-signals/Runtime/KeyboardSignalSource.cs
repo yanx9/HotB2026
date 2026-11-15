@@ -33,6 +33,13 @@ namespace Bci.Signals
                     value = 1f;
                     released = keyboard.spaceKey.wasReleasedThisFrame;
                 }
+                else if (!string.IsNullOrEmpty(binding.key) && System.Enum.TryParse(binding.key, true, out Key key) && key != Key.None)
+                {
+                    // dowolny pojedynczy klawisz po nazwie z Input System, np. "f" albo "leftAlt"
+                    active = keyboard[key].isPressed;
+                    value = 1f;
+                    released = keyboard[key].wasReleasedThisFrame;
+                }
                 if (!active && !released) continue;
 
                 // odwracamy przeliczenie z powiązania, żeby pełne wciśnięcie dało w grze pełne wychylenie

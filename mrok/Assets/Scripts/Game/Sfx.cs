@@ -24,21 +24,37 @@ namespace Mrok.Game
 
         static float Sine(float frequency, float t) => Mathf.Sin(2f * Mathf.PI * frequency * t);
 
-        // krok: stłumiony szum i niskie stuknięcie; weight przesuwa go w stronę ciężkiego buta
+        // krok: miękki, stłumiony szmer podeszwy (pięta, potem palce) bez twardego stuknięcia;
+        // weight dodaje cichy, niski ciężar buta
         public static AudioClip Step(float weight)
         {
             var random = new System.Random(3);
-            float low = 0f;
-            return Make("Krok", 0.22f, 0.8f, t =>
+            float low = 0f, lower = 0f;
+            return Make("Krok", 0.32f, 0.45f, t =>
             {
-                low += ((float)random.NextDouble() * 2f - 1f - low) * Mathf.Lerp(0.3f, 0.08f, weight);
-                return low * Mathf.Exp(-t * 35f) + weight * Sine(70f, t) * Mathf.Exp(-t * 22f);
+                // dwa stopnie wygładzania: z szumu zostaje samo głuche "fff"
+                low += ((float)random.NextDouble() * 2f - 1f - low) * Mathf.Lerp(0.09f, 0.05f, weight);
+                lower += (low - lower) * 0.25f;
+                float toe = t - 0.075f;
+                float envelope = Mathf.Min(1f, t / 0.012f) * Mathf.Exp(-t * 26f)
+                               + (toe > 0f ? 0.55f * Mathf.Min(1f, toe / 0.015f) * Mathf.Exp(-toe * 30f) : 0f);
+                return lower * envelope + weight * 0.05f * Sine(52f, t) * Mathf.Min(1f, t / 0.02f) * Mathf.Exp(-t * 24f);
             });
         }
 
-        // skan: krótki ton, który opada jak echo
-        public static AudioClip Ping() =>
-            Make("Skan", 1.4f, 0.6f, t => (Sine(880f - 300f * t, t) + 0.4f * Sine(1760f - 600f * t, t)) * Mathf.Exp(-t * 3.2f));
+        // skan: niski oddech fali, który narasta i długo wybrzmiewa, bez melodyjnego tonu
+        public static AudioClip Ping()
+        {
+            var random = new System.Random(11);
+            float low = 0f, lower = 0f;
+            return Make("Skan", 1.8f, 0.5f, t =>
+            {
+                low += ((float)random.NextDouble() * 2f - 1f - low) * Mathf.Lerp(0.2f, 0.03f, Mathf.Clamp01(t / 0.9f));   // szum ciemnieje z czasem
+                lower += (low - lower) * 0.3f;
+                float swell = Mathf.Min(1f, t / 0.05f) * Mathf.Exp(-t * 2.4f);
+                return lower * swell * 3f + 0.12f * Sine(82f - 18f * t, t) * Mathf.Min(1f, t / 0.03f) * Mathf.Exp(-t * 3.5f);
+            });
+        }
 
         // tyknięcie co sekundę zamkniętych oczu; wysokość ustawia gra
         public static AudioClip Tick() =>
@@ -58,6 +74,28 @@ namespace Mrok.Game
                 float f = 150f - 60f * t;
                 return (Sine(f, t) + 0.5f * Sine(2f * f, t) + 0.3f * Sine(3f * f, t)) * Mathf.Min(1f, t * 30f) * Mathf.Min(1f, (0.45f - t) * 10f);
             });
+
+        // kamień spada na posadzkę: twarde stuknięcie i dwa cichsze odbicia
+        public static AudioClip Clack()
+        {
+            var random = new System.Random(5);
+            float low = 0f;
+            return Make("Kamień", 0.5f, 0.9f, t =>
+            {
+                low += ((float)random.NextDouble() * 2f - 1f - low) * 0.5f;
+                float sum = 0f;
+                foreach (var (at, gain) in new[] { (0f, 1f), (0.16f, 0.45f), (0.27f, 0.2f) })
+                {
+                    float s = t - at;
+                    if (s >= 0f) sum += gain * (low * Mathf.Exp(-s * 90f) + 0.6f * Sine(1250f, s) * Mathf.Exp(-s * 70f) + 0.5f * Sine(310f, s) * Mathf.Exp(-s * 45f));
+                }
+                return sum;
+            });
+        }
+
+        // drzwi nie puszczają: brakuje łupu
+        public static AudioClip Deny() =>
+            Make("Nie", 0.35f, 0.5f, t => (Sine(196f, t) + 0.5f * Sine(185f, t)) * Mathf.Min(1f, t * 60f) * Mathf.Exp(-t * 9f));
 
         public static AudioClip Caught() =>
             Make("Złapany", 1.2f, 0.9f, t => (Sine(55f, t) + 0.6f * Sine(82f, t) + 0.3f * Sine(110f * (1f - 0.2f * t), t)) * Mathf.Exp(-t * 2.5f));

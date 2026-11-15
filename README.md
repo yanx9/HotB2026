@@ -78,21 +78,59 @@ Osobny projekt Unity (3D, URP). Namiot piwny, deska, precel i nóż. Ruch ręki 
 
 ## Trzecia gra: Mrok (`mrok/`)
 
-Osobny projekt Unity (3D, URP). Skradanka z pierwszej osoby w zupełnej ciemności: nic nie ma wyglądu, widać tylko chmurę punktów zostawioną przez skan. Zamknięte oczy ładują skan; po otwarciu fala punktów odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy były zamknięte (od 4 m po 0,5 s do 28 m po 6 s). Strażnicy na stopklatce zostają tam, gdzie byli, a naprawdę idą dalej. Trzeba zebrać trzy łupy i dojść do zielonych drzwi.
+Osobny projekt Unity (3D, URP). Skradanka z pierwszej osoby w zupełnej ciemności: nic nie ma wyglądu, widać tylko chmurę punktów zostawioną przez skan. Zamknięte oczy ładują skan; po otwarciu fala punktów odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy były zamknięte (od 4 m po 0,5 s do 28 m po 6 s). Strażnicy na stopklatce zostają tam, gdzie byli, a naprawdę idą dalej. Trzeba zebrać łup i dojść do zielonych drzwi. Gra jest po angielsku.
 
-Strażnicy nie widzą, ale słyszą: kroki gracza (skradanie jest dużo cichsze) i sam skan, tym dalej, im większy. Idą w miejsce hałasu, nasłuchują i wracają na patrol. Z zamkniętymi oczami można chodzić. Wtedy orientację daje dźwięk przestrzenny: kroki strażników, dzwonienie łupu i tyknięcia odliczające sekundy ładowania.
+| | |
+|---|---|
+| ![Sala wyboru poziomu](docs/img/mrok/menu.jpg) | ![Samouczek: napis odsłonięty skanem](docs/img/mrok/tutorial.jpg) |
+| Sala wyboru poziomu: skanuje się sama, poziom wybiera się, podchodząc do drzwi | Samouczek: wskazówki to napisy z punktów, które odsłania skan |
+| ![Rotunda w muzeum](docs/img/mrok/rotunda.jpg) | ![Ogród z altaną](docs/img/mrok/garden.jpg) |
+| Muzeum: rotunda z posągami i łupem na postumencie | Ogród: altana, żywopłoty i drzewa pod gołym niebem |
+| ![Tor rzutu kamieniem](docs/img/mrok/throw.jpg) | |
+| Rzut kamieniem: łuk pokazuje tor, krążek miejsce upadku | |
+
+**Sterowanie z opaski**
+
+| Sygnał | Działanie |
+|---|---|
+| zamknięte oczy (`eyes_closed_active`) | ładowanie skanu; otwarcie oczu go wypuszcza |
+| zaciśnięta szczęka (`jaw_active`) | sprint, zero-jedynkowo: wystarczy lekkie zaciśnięcie. Bieg jest szybki i głośny |
+
+Potok liczy szczękę także bez jej kalibracji (heurystyka względem spoczynku), więc sprint działa z każdym profilem. Powiązania są w `mrok/Assets/Resources/signals.json`, warstwa sygnałów to wspólny pakiet `shared/bci-signals`. Oczy wymagają potoku uruchomionego z profilem kalibracji (`bci_pipeline.py --profile ...`, patrz `docs/calibration.md`).
+
+**Zasady**
+
+- **Strażnicy słyszą kroki** (bieg z 10 m, chód z 6 m, skradanie i kucanie z ok. 1 m; mur tłumi) i idą sprawdzić to miejsce. Skanu nie słyszą.
+- **Strażnicy widzą** to, co mają przed sobą: do 10 m, w stożku 55° na boki, jeśli nic nie zasłania. Zobaczywszy gracza, gonią go; zgubiwszy, sprawdzają miejsce, gdzie widzieli go ostatnio.
+- **Kucanie** obniża gracza do 0,95 m: skrzynia, ławka czy stół zasłaniają go wtedy w całości.
+- **Kamienie** leżą na podłodze (jasnoniebieskie). Podniesione można rzucać: przytrzymany lewy przycisk myszy kołysze siłę rzutu, łuk punktów pokazuje tor i miejsce upadku, puszczenie rzuca. Strażnik idzie w miejsce uderzenia i dłużej tam nasłuchuje. Wartownik na posterunku schodzi z niego tylko za kamieniem.
+- **Kroki strażników** słyszane z bliska zostawiają na podłodze gasnące pomarańczowe ślady (czerwone, gdy strażnik jest zaalarmowany).
+- Z zamkniętymi oczami można chodzić. Orientację daje wtedy dźwięk przestrzenny: kroki strażników, dzwonienie łupu i tyknięcia odliczające sekundy ładowania.
+
+**Poziomy** (`Levels.cs`: mapa znakowa, sale, patrole, posterunki, napisy)
+
+- **Tutorial:** sześć sal uczących po kolei skanu, łupu, kucania i rzutu kamieniem. Ostatniego wartownika nie da się minąć bez odciągnięcia go kamieniem.
+- **Museum:** hol, galeria z kolumnadą pod sklepieniem kolebkowym, rotunda z posągami pod kopułą, korytarz, biblioteka, dziedziniec z fontanną, magazyn ze skarbcem. Trzy łupy, czterech strażników.
+- **Garden:** labirynt żywopłotów, drzewa, głazy, altana z kopułą. Trzy łupy, czterech strażników.
+
+W czasie rozgrywki nie ma napisów. Tekst jest tylko na ekranie ładowania i po zakończeniu poziomu; łup pokazują romby u dołu ekranu, kamienie w kieszeni kropki pod nimi.
+
+**Budowa.** Cały świat to zderzacze budowane z mapy przez `Level.cs` (bryły w `Shapes.cs`, sylwetki ze stawami w `Figure.cs`, napisy i kamienie z punktów w `Sign.cs`). Chmurę punktów rysuje `PointCloud.cs` z shaderem `PointCloud.shader`; kolor punktu zależy od rodzaju powierzchni. Skan to 54 000 promieni liczonych na wątkach roboczych (ok. 40 ms).
 
 **Uruchomienie:** otwórz `mrok/` w Unity 6000.6.9f1 i wciśnij Play w `Assets/Scenes/SampleScene`. Najlepiej w słuchawkach.
 
 | Klawisz | Działanie |
 |---|---|
-| Spacja (trzymaj) | „mam zamknięte oczy”: zawsze zapisuje prawdę do nagrania (`truth_closed` / `truth_open`); w trybie KLAWISZ albo bez potoku BCI steruje też grą |
-| F2 | tryb KLAWISZ (steruje spacja, EEG tylko się nagrywa) / EEG (steruje opaska) |
-| WASD, Shift | ruch, skradanie |
-| mysz (po kliknięciu w okno) albo Q / E | obrót |
-| R | restart po wpadce (albo zamknięcie oczu na 1,5 s) |
-
-**Sygnał:** gra słucha `eyes_closed_active` z potoku uruchomionego z profilem kalibracji (`bci_pipeline.py --profile ...`, patrz `docs/calibration.md`). Warstwa sygnałów to wspólny pakiet `shared/bci-signals`; powiązanie jest w `mrok/Assets/Resources/signals.json`.
+| WASD, mysz (po kliknięciu w okno) albo Q / E | ruch, obrót |
+| Shift / Ctrl albo C | skradanie / kucanie |
+| lewy przycisk myszy (trzymaj i puść) | rzut kamieniem |
+| Spacja (trzymaj) | „mam zamknięte oczy”: zawsze zapisuje prawdę do nagrania (`truth_closed` / `truth_open`); w trybie KEY albo bez potoku BCI steruje też grą |
+| F | sprint z klawiatury (w trybie KEY albo bez potoku BCI) |
+| F2 | tryb KEY (steruje klawiatura, EEG tylko się nagrywa) / EEG (steruje opaska) |
+| F1 | napisy diagnostyczne (sygnały, tryb, klatki/s), domyślnie ukryte |
+| Esc | powrót do sali z drzwiami |
+| 1 / 2 / 3 | w sali z drzwiami: od razu otwiera poziom |
+| R | ponowienie po wpadce (albo zamknięcie oczu na 1,5 s) |
 
 ## Wspólna warstwa sygnałów (`shared/bci-signals`)
 

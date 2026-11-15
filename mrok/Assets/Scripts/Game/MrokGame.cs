@@ -11,28 +11,54 @@ namespace Mrok.Game
 {
     // Skradanka w zupełnej ciemności. Gdy gracz zamyka oczy (sygnał "eyes"), gra liczy czas;
     // gdy je otwiera, skan odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy
-    // były zamknięte. Im większy skan, tym dalej słyszą go strażnicy.
+    // były zamknięte. Strażnicy skanu nie słyszą: słyszą kroki i widzą to, co mają przed sobą.
+    //
+    // W czasie gry na ekranie nie ma napisów: tekst pojawia się tylko na ekranie ładowania
+    // i po zakończeniu poziomu, a wskazówki w świecie to napisy z punktów, które odsłania skan.
+    // Poziom wybiera się w sali z trojgiem drzwi, przechodząc przez jedne z nich.
+    //
+    // Kamienie leżą na podłodze; podniesione można rzucać (lewy przycisk myszy). Dopóki przycisk
+    // jest wciśnięty, siła rzutu kołysze się tam i z powrotem, a tor lotu widać jako łuk punktów.
+    // Strażnicy idą sprawdzić miejsce, w które kamień uderzył.
     public class MrokGame : MonoBehaviour
     {
-        enum Phase { Play, Caught, Won }
+        enum Phase { Loading, Play, Caught, Won }
 
         const float MinClosed = 0.5f;        // krótsze zamknięcie to mrugnięcie
         const float FullCharge = 6f;         // po tylu sekundach skan ma pełny zasięg
         const float MinRadius = 4f, MaxRadius = 28f;
-        const float ScanNoise = 0.55f;       // jaką część zasięgu skanu słychać
         const float WallMuffle = 0.55f;      // ściana na drodze skraca zasięg hałasu
         const float CatchDistance = 0.95f;
         const float RestartClosed = 1.5f;
+        const float StepHeard = 11f;         // z jak daleka kroki strażnika zostawiają widoczny ślad
+        const float HubPulse = 6f;           // co ile sekund sala wyboru skanuje się sama
+        const float HubRadius = 16f;
+        const float RockNoise = 20f;         // z jak daleka słychać upadek kamienia
+        const float ThrowSlow = 6f, ThrowFast = 16f, ThrowSwing = 1.1f;   // prędkość rzutu i czas jednego wahnięcia siły
+        const float ThrowGravity = 12f, ThrowLift = 14f;                  // łuk celowo wyraźny; rzut idzie nieco ponad celownik
+        const int MaxStones = 6;
+
+        static int levelIndex = Levels.Hub;
+        static bool showDebug;               // F1: napisy diagnostyczne dla prowadzącego pokaz
 
         [NonSerialized] bool built;
         Phase phase;
         SignalBindings bindings;
         Player player;
-        PointCloud cloud;
+        PointCloud cloud, echoes;   // skan i ślady kroków, które gracz słyszy
         readonly Dictionary<Collider, Surface> surfaces = new Dictionary<Collider, Surface>();
         readonly List<Guard> guards = new List<Guard>();
         readonly List<GameObject> loot = new List<GameObject>();
         int lootTotal;
+
+        readonly List<Sign> pebbles = new List<Sign>();   // kamienie leżące na poziomie
+        readonly List<Vector3> line = new List<Vector3>();
+        PointCloud marks;                                 // tor rzutu i lecący kamień
+        int stones;
+        bool aiming, flying, lockedBefore;
+        float aimAt;
+        Vector3 rockAt, rockVelocity;
+        AudioClip clack;
 
         bool eyesClosed;
         float closedAt;
@@ -48,10 +74,12 @@ namespace Mrok.Game
         float truthAt;
 
         AudioSource effects;
-        AudioClip ping, tick, step, pickup, caught, win;
-        Image blackout;
-        Text status, message, controls, signals;
-        float messageUntil;
+        AudioClip ping, tick, step, pickup, caught, win, deny;
+        Image blackout, curtain;
+        Text title, body, footer, toast, status, signals;
+        GameObject debug;
+        readonly List<Image> pips = new List<Image>(), dots = new List<Image>();
+        float loadUntil, curtainTarget, toastUntil, pulseAt, deniedAt = -10f;
         float fps = 60f;
         readonly StringBuilder builder = new StringBuilder();
 
@@ -68,9 +96,16 @@ namespace Mrok.Game
             if (FindAnyObjectByType<MrokGame>() == null) new GameObject("Mrok").AddComponent<MrokGame>();
         }
 
+        // Poziom o podanym numerze (Levels.All) zaczyna się od następnej klatki.
+        public void Open(int level)
+        {
+            levelIndex = Mathf.Clamp(level, 0, Levels.All.Length - 1);
+            built = false;
+        }
+
         // ---------- budowa ----------
 
-        // Wołane na starcie, po każdej wpadce i po przeładowaniu skryptów w trakcie gry.
+        // Wołane na starcie, przy zmianie poziomu, po każdej wpadce i po przeładowaniu skryptów w trakcie gry.
         void Build()
         {
             built = true;
@@ -85,6 +120,11 @@ namespace Mrok.Game
             surfaces.Clear();
             guards.Clear();
             loot.Clear();
+            pips.Clear();
+            dots.Clear();
+            pebbles.Clear();
+            stones = 0;
+            aiming = flying = false;
             SignalHub.Clear();
 
             var config = SignalBindings.Load();
@@ -108,9 +148,21 @@ namespace Mrok.Game
             cam.fieldOfView = 75f;
             foreach (var light in FindObjectsByType<Light>()) light.enabled = false;
 
+            LevelInfo level = Levels.All[levelIndex];
+            Level.Current = level;
             Level.Build(transform, surfaces);
             cloud = new PointCloud();
             cloud.Build(transform);
+            echoes = new PointCloud(4096);
+            echoes.Build(transform);
+            marks = new PointCloud(4096);
+            marks.Build(transform);
+            foreach (var position in Level.RockPositions)
+            {
+                var pebble = Sign.Pebble(position + Vector3.up * 0.07f, 0.1f);
+                pebbles.Add(pebble);
+                Level.Signs.Add(pebble);
+            }
 
             effects = GetOrAdd<AudioSource>();
             ping = Sfx.Ping();
@@ -119,12 +171,15 @@ namespace Mrok.Game
             pickup = Sfx.Pickup();
             caught = Sfx.Caught();
             win = Sfx.Win();
+            deny = Sfx.Deny();
+            clack = Sfx.Clack();
 
             var playerGo = new GameObject("Gracz");
             playerGo.transform.SetParent(transform, false);
             player = playerGo.AddComponent<Player>();
-            player.Build(cam, Level.PlayerStart);
+            player.Build(cam, Level.PlayerStart, level.startYaw);
             player.Stepped = OnPlayerStep;
+            player.frozen = true;
 
             AudioClip guardStep = Sfx.Step(1f), alert = Sfx.Alert();
             foreach (var route in Level.Patrols)
@@ -133,21 +188,49 @@ namespace Mrok.Game
                 guardGo.transform.SetParent(transform, false);
                 var guard = guardGo.AddComponent<Guard>();
                 guard.Build(route, surfaces, guardStep, alert);
-                guards.Add(guard);
+                AddGuard(guard);
+            }
+            foreach (var post in level.posts)
+            {
+                var guardGo = new GameObject("Wartownik");
+                guardGo.transform.SetParent(transform, false);
+                var guard = guardGo.AddComponent<Guard>();
+                guard.Build(new[] { new Vector2Int(post.x, post.y) }, surfaces, guardStep, alert, post.yaw);
+                AddGuard(guard);
             }
 
             AudioClip beacon = Sfx.Beacon();
             foreach (var position in Level.LootPositions) loot.Add(BuildLoot(position, beacon));
             lootTotal = loot.Count;
-            BuildExit();
+            if (level.hub)
+                foreach (var portal in Level.Portals.Values) BuildDoor(portal, true);
+            else
+                BuildDoor(Level.ExitPosition, false);
             BuildHud();
 
-            phase = Phase.Play;
+            // ekran ładowania: jedyne miejsce, gdzie gra mówi do gracza tekstem
+            phase = Phase.Loading;
             eyesClosed = false;
-            Say("Jest zupełnie ciemno.\nZamknij oczy, policz do trzech i otwórz.", 600f);
+            title.text = Spaced(level.title);
+            body.text = string.Join("\n", level.intro);
+            footer.text = "WASD move     Clench jaw to sprint     Shift sneak     Ctrl crouch     Hold click to throw     Esc doors";
+            curtain.color = Color.black;
+            curtainTarget = 1f;
+            loadUntil = Time.time + (level.hub ? 2.5f : 4.5f);
             MarkerSender.Send("session_start");
+            MarkerSender.Send("level", levelIndex);
             MarkerSender.Send(keyboardMode ? "mode_keyboard" : "mode_eeg");
         }
+
+        void AddGuard(Guard guard)
+        {
+            guard.Stepped = OnGuardStep;
+            guard.prey = player;
+            guard.enabled = false;   // rusza dopiero po ekranie ładowania
+            guards.Add(guard);
+        }
+
+        static string Spaced(string text) => string.Join(" ", text.ToCharArray());
 
         T GetOrAdd<T>() where T : Component
         {
@@ -161,14 +244,25 @@ namespace Mrok.Game
             var go = new GameObject("Łup");
             go.transform.SetParent(transform, false);
             go.transform.position = position;
-            var pedestal = go.AddComponent<BoxCollider>();
-            pedestal.center = new Vector3(0f, 0.45f, 0f);
-            pedestal.size = new Vector3(0.5f, 0.9f, 0.5f);
-            surfaces[pedestal] = Surface.Wall;
-            var treasure = go.AddComponent<SphereCollider>();
-            treasure.center = new Vector3(0f, 1.15f, 0f);
-            treasure.radius = 0.24f;
-            surfaces[treasure] = Surface.Loot;
+            var shapes = new Shapes(go.transform, surfaces);
+            shapes.Lathe(Vector3.zero, Surface.Prop,
+                0.34f, 0f, 0.34f, 0.08f, 0.24f, 0.14f, 0.2f, 0.78f, 0.3f, 0.84f, 0.3f, 0.9f, 0f, 0.9f);
+            Vector3 top = Vector3.up * 0.9f;
+            switch (loot.Count % 3)
+            {
+                case 0:   // waza
+                    shapes.Lathe(top, Surface.Loot,
+                        0f, 0f, 0.09f, 0f, 0.07f, 0.04f, 0.19f, 0.2f, 0.2f, 0.3f, 0.1f, 0.44f, 0.08f, 0.5f, 0.13f, 0.54f, 0f, 0.5f);
+                    break;
+                case 1:   // kielich
+                    shapes.Lathe(top, Surface.Loot,
+                        0f, 0f, 0.13f, 0f, 0.12f, 0.03f, 0.03f, 0.06f, 0.03f, 0.22f, 0.15f, 0.36f, 0.17f, 0.5f, 0.15f, 0.5f, 0.02f, 0.3f, 0f, 0.3f);
+                    break;
+                default:  // klejnot na obręczy
+                    shapes.Lathe(top, Surface.Loot, 0f, 0f, 0.14f, 0f, 0.14f, 0.05f, 0.06f, 0.07f, 0f, 0.07f);
+                    shapes.Box(top + Vector3.up * 0.27f, Vector3.one * 0.24f, Surface.Loot, Quaternion.Euler(45f, 0f, 35.26f));
+                    break;
+            }
 
             var source = go.AddComponent<AudioSource>();
             source.clip = beacon;
@@ -182,14 +276,20 @@ namespace Mrok.Game
             return go;
         }
 
-        void BuildExit()
+        // Zielone drzwi w murze za polem: ościeżnica z nadprożem i uchylone skrzydło. W poziomie
+        // to wyjście (mur od południa), w sali wyboru wejście do poziomu (mur od północy).
+        void BuildDoor(Vector3 cell, bool north)
         {
-            var go = new GameObject("Wyjście");
+            var go = new GameObject("Drzwi");
             go.transform.SetParent(transform, false);
-            go.transform.position = Level.ExitPosition + new Vector3(0f, 1.1f, -Level.Cell / 2f + 0.06f);
-            var door = go.AddComponent<BoxCollider>();
-            door.size = new Vector3(1.3f, 2.2f, 0.1f);
-            surfaces[door] = Surface.Exit;
+            go.transform.position = cell + new Vector3(0f, 0f, north ? Level.Cell / 2f : -Level.Cell / 2f);
+            go.transform.rotation = Quaternion.Euler(0f, north ? 180f : 0f, 0f);
+            var shapes = new Shapes(go.transform, surfaces);
+            shapes.Box(new Vector3(-0.75f, 1.2f, 0.06f), new Vector3(0.14f, 2.4f, 0.14f), Surface.Exit);
+            shapes.Box(new Vector3(0.75f, 1.2f, 0.06f), new Vector3(0.14f, 2.4f, 0.14f), Surface.Exit);
+            shapes.Box(new Vector3(0f, 2.47f, 0.06f), new Vector3(1.64f, 0.14f, 0.14f), Surface.Exit);
+            shapes.Box(new Vector3(-0.68f, 1.2f, 0.03f), new Vector3(1.36f, 2.4f, 0.06f), Surface.Exit, Quaternion.Euler(0f, -14f, 0f)).center = new Vector3(0.68f, 0f, 0f);
+            shapes.Sphere(new Vector3(0.45f, 1.05f, 0.32f), 0.05f, Surface.Exit);   // klamka
         }
 
         void BuildHud()
@@ -204,25 +304,68 @@ namespace Mrok.Game
             scaler.matchWidthOrHeight = 1f;
 
             // zasłona na czas zamkniętych oczu: klawiatura udaje sygnał, więc ekran też musi zgasnąć
-            var cover = new GameObject("Zasłona");
-            cover.transform.SetParent(canvasGo.transform, false);
-            blackout = cover.AddComponent<Image>();
-            blackout.color = Color.black;
-            blackout.raycastTarget = false;
-            blackout.rectTransform.anchorMin = Vector2.zero;
-            blackout.rectTransform.anchorMax = Vector2.one;
-            blackout.rectTransform.offsetMin = blackout.rectTransform.offsetMax = Vector2.zero;
+            blackout = Cover(canvasGo.transform, "Zasłona");
             blackout.enabled = false;
 
+            // łup jako rząd rombów u dołu ekranu: zebrane świecą na złoto
+            for (int i = 0; i < lootTotal; i++)
+            {
+                var pip = new GameObject("Łup").AddComponent<Image>();
+                pip.transform.SetParent(canvasGo.transform, false);
+                pip.raycastTarget = false;
+                pip.rectTransform.anchorMin = pip.rectTransform.anchorMax = new Vector2(0.5f, 0f);
+                pip.rectTransform.sizeDelta = new Vector2(9f, 9f);
+                pip.rectTransform.anchoredPosition = new Vector2((i - (lootTotal - 1) / 2f) * 24f, 26f);
+                pip.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);
+                pips.Add(pip);
+            }
+
+            // kamienie w kieszeni: rząd kropek pod rombami
+            for (int i = 0; i < MaxStones; i++)
+            {
+                var dot = new GameObject("Kamień").AddComponent<Image>();
+                dot.transform.SetParent(canvasGo.transform, false);
+                dot.raycastTarget = false;
+                dot.color = new Color(0.55f, 0.85f, 1f, 0.85f);
+                dot.rectTransform.anchorMin = dot.rectTransform.anchorMax = new Vector2(0.5f, 0f);
+                dot.rectTransform.sizeDelta = new Vector2(5f, 5f);
+                dots.Add(dot);
+            }
+
+            // kurtyna z tekstem: ekran ładowania i zakończenie poziomu
+            curtain = Cover(canvasGo.transform, "Kurtyna");
             var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            status = MakeText(canvasGo.transform, font, TextAnchor.UpperLeft, 18, new Vector2(16f, -12f));
-            message = MakeText(canvasGo.transform, font, TextAnchor.MiddleCenter, 26, new Vector2(0f, 140f));
-            controls = MakeText(canvasGo.transform, font, TextAnchor.LowerLeft, 14, new Vector2(16f, 12f));
-            signals = MakeText(canvasGo.transform, font, TextAnchor.LowerRight, 14, new Vector2(-16f, 12f));
-            controls.text = "WASD  ruch (Shift: skradanie)\nmysz albo Q / E  obrót\n" +
-                            "Spacja: trzymaj, gdy masz zamknięte oczy\nF2  tryb KLAWISZ / EEG";
-            Color dim = new Color(0.55f, 0.6f, 0.65f);
-            status.color = controls.color = signals.color = dim;
+            title = MakeText(curtain.transform, font, TextAnchor.MiddleCenter, 40, new Vector2(0f, 50f));
+            body = MakeText(curtain.transform, font, TextAnchor.MiddleCenter, 21, new Vector2(0f, -110f));
+            footer = MakeText(curtain.transform, font, TextAnchor.LowerCenter, 13, new Vector2(0f, 28f));
+            body.lineSpacing = 1.5f;
+            body.color = new Color(0.72f, 0.76f, 0.8f);
+            footer.color = new Color(0.4f, 0.44f, 0.48f);
+
+            // napisy dla prowadzącego pokaz, domyślnie ukryte (F1)
+            debug = new GameObject("Diagnostyka");
+            debug.transform.SetParent(canvasGo.transform, false);
+            var area = debug.AddComponent<RectTransform>();
+            area.anchorMin = Vector2.zero;
+            area.anchorMax = Vector2.one;
+            area.offsetMin = area.offsetMax = Vector2.zero;
+            status = MakeText(debug.transform, font, TextAnchor.UpperLeft, 14, new Vector2(16f, -12f));
+            signals = MakeText(debug.transform, font, TextAnchor.LowerRight, 14, new Vector2(-16f, 12f));
+            toast = MakeText(canvasGo.transform, font, TextAnchor.UpperCenter, 16, new Vector2(0f, -14f));
+            status.color = signals.color = toast.color = new Color(0.55f, 0.6f, 0.65f);
+            debug.SetActive(showDebug);
+        }
+
+        static Image Cover(Transform parent, string name)
+        {
+            var image = new GameObject(name).AddComponent<Image>();
+            image.transform.SetParent(parent, false);
+            image.color = Color.black;
+            image.raycastTarget = false;
+            image.rectTransform.anchorMin = Vector2.zero;
+            image.rectTransform.anchorMax = Vector2.one;
+            image.rectTransform.offsetMin = image.rectTransform.offsetMax = Vector2.zero;
+            return image;
         }
 
         static Text MakeText(Transform parent, Font font, TextAnchor anchor, int size, Vector2 offset)
@@ -245,37 +388,81 @@ namespace Mrok.Game
             return text;
         }
 
-        void Say(string text, float seconds)
-        {
-            message.text = text;
-            messageUntil = Time.time + seconds;
-        }
-
         // ---------- rozgrywka ----------
 
         void Update()
         {
             if (!built) Build();
             cloud.Tick();
+            UpdateKeys();
             UpdateEyes();
 
+            if (phase == Phase.Loading && Time.time >= loadUntil)
+            {
+                phase = Phase.Play;
+                curtainTarget = 0f;
+                player.frozen = false;
+                foreach (var guard in guards) guard.enabled = true;
+                pulseAt = Time.time + 0.3f;
+            }
             if (phase == Phase.Play)
             {
-                CollectLoot();
-                CheckExit();
-                CheckGuards();
+                if (Level.Current.hub)
+                {
+                    // sala wyboru odsłania się sama, żeby drzwi i napisy było widać bez opaski
+                    if (Time.time >= pulseAt)
+                    {
+                        pulseAt = Time.time + HubPulse;
+                        Scan(HubRadius, 0.35f);
+                    }
+                    CheckPortals();
+                }
+                else
+                {
+                    CollectLoot();
+                    CollectStones();
+                    UpdateThrow();
+                    CheckExit();
+                    CheckGuards();
+                }
             }
-            else if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
-            {
-                built = false;
-            }
+            UpdateHud();
+        }
 
-            if (Time.time > messageUntil) message.text = "";
-            status.text = $"łup {lootTotal - loot.Count}/{lootTotal}\n" + (keyboardMode
-                ? "tryb KLAWISZ: steruje spacja, EEG tylko się nagrywa"
-                : BridgeAlive ? "tryb EEG: steruje opaska, spacja zapisuje prawdę"
-                              : "tryb EEG: brak potoku BCI, steruje spacja");
-            ShowSignals();
+        void UpdateKeys()
+        {
+            var keyboard = Keyboard.current;
+            if (keyboard == null) return;
+            if (keyboard.f1Key.wasPressedThisFrame)
+            {
+                showDebug = !showDebug;
+                debug.SetActive(showDebug);
+            }
+            if (keyboard.f2Key.wasPressedThisFrame)
+            {
+                keyboardMode = !keyboardMode;
+                MarkerSender.Send(keyboardMode ? "mode_keyboard" : "mode_eeg");
+                Toast(keyboardMode ? "KEY mode: space controls the eyes" : "EEG mode: the headset controls the eyes");
+            }
+            if (keyboard.escapeKey.wasPressedThisFrame)
+            {
+                if (Level.Current.hub) Cursor.lockState = CursorLockMode.None;
+                else Open(Levels.Hub);
+            }
+            if (keyboard.rKey.wasPressedThisFrame && (phase == Phase.Caught || phase == Phase.Won)) built = false;
+            // skróty dla prowadzącego: w sali wyboru cyfra otwiera poziom
+            if (Level.Current.hub && phase == Phase.Play)
+            {
+                if (keyboard.digit1Key.wasPressedThisFrame) Open(1);
+                if (keyboard.digit2Key.wasPressedThisFrame) Open(2);
+                if (keyboard.digit3Key.wasPressedThisFrame) Open(3);
+            }
+        }
+
+        void Toast(string text)
+        {
+            toast.text = text;
+            toastUntil = Time.time + 2.5f;
         }
 
         static bool BridgeAlive => Time.unscaledTime - UdpSignalSource.LastPacketAt < 2f;
@@ -283,12 +470,6 @@ namespace Mrok.Game
         void UpdateEyes()
         {
             var keyboard = Keyboard.current;
-            if (keyboard != null && keyboard.f2Key.wasPressedThisFrame)
-            {
-                keyboardMode = !keyboardMode;
-                MarkerSender.Send(keyboardMode ? "mode_keyboard" : "mode_eeg");
-                Say(keyboardMode ? "Tryb KLAWISZ: oczami steruje spacja." : "Tryb EEG: oczami steruje opaska.", 2.5f);
-            }
 
             // prawda do nagrania: spacja wciśnięta = gracz ma zamknięte oczy (w obu trybach)
             bool space = keyboard != null && keyboard.spaceKey.isPressed;
@@ -303,6 +484,11 @@ namespace Mrok.Game
             // w trybie EEG spacja nie może podmieniać sygnału z opaski, chyba że potoku nie ma
             keyboardSource.enabled = keyboardMode || !BridgeAlive;
             bool closed = keyboardMode ? space : bindings.Held("eyes");
+
+            // Sprint: zaciśnięta szczęka, zero-jedynkowo. Mięśnie szczęki zakłócają też EEG nad
+            // potylicą, więc w trakcie biegu sygnał z opaski nie może zacząć "zamykać oczu".
+            player.sprint = bindings.Held("sprint");
+            if (!keyboardMode && BridgeAlive && player.sprint && !eyesClosed) closed = false;
             blackout.enabled = closed;
 
             if (closed && !eyesClosed)
@@ -311,7 +497,7 @@ namespace Mrok.Game
                 ticks = 0;
                 MarkerSender.Send("eyes_closed");
             }
-            if (closed)
+            if (closed && phase != Phase.Loading)
             {
                 // tyknięcie co sekundę, coraz wyższe: jedyna wskazówka, jak duży będzie skan
                 float held = Time.time - closedAt;
@@ -326,26 +512,30 @@ namespace Mrok.Game
             {
                 float held = Time.time - closedAt;
                 MarkerSender.Send("eyes_open", held);
-                if (phase != Phase.Play)
+                if (phase == Phase.Caught)
                 {
                     if (held >= RestartClosed) built = false;
                 }
-                else if (held >= MinClosed)
+                else if (phase == Phase.Won)
                 {
-                    Scan(Mathf.Lerp(MinRadius, MaxRadius, Mathf.Clamp01((held - MinClosed) / (FullCharge - MinClosed))));
+                    if (held >= RestartClosed) Open(Levels.Hub);
+                }
+                else if (phase == Phase.Play && held >= MinClosed)
+                {
+                    Scan(Mathf.Lerp(MinRadius, MaxRadius, Mathf.Clamp01((held - MinClosed) / (FullCharge - MinClosed))), 1f);
+                    pulseAt = Time.time + HubPulse;
                 }
             }
             eyesClosed = closed;
         }
 
-        void Scan(float radius)
+        void Scan(float radius, float volume)
         {
             LastRadius = radius;
-            cloud.Scan(player.EyePosition, radius, surfaces);
+            Physics.SyncTransforms();   // strażnicy ruszają się poza krokiem fizyki; skan ma trafić w ich obecną pozę
+            cloud.Scan(player.EyePosition, radius, surfaces, Level.Signs);
             effects.pitch = Mathf.Lerp(1.3f, 0.75f, radius / MaxRadius);   // duży skan brzmi niżej i dłużej
-            effects.PlayOneShot(ping);
-            Noise(player.transform.position, radius * ScanNoise);
-            if (messageUntil > Time.time + 100f) Say("", 0f);   // pierwsza podpowiedź znika po pierwszym skanie
+            effects.PlayOneShot(ping, volume);
             MarkerSender.Send("scan", radius);
         }
 
@@ -356,8 +546,19 @@ namespace Mrok.Game
             if (phase == Phase.Play) Noise(player.transform.position, reach);
         }
 
+        // Krok strażnika, który gracz słyszy, zostawia na podłodze gasnący ślad. Zza muru słychać
+        // słabiej, więc ślad pojawia się dopiero z bliska.
+        void OnGuardStep(Guard guard, Vector3 foot)
+        {
+            Vector3 from = player.EyePosition, to = foot + Vector3.up * 1.2f;
+            bool wall = Physics.Linecast(from, to, out var hit) && surfaces.TryGetValue(hit.collider, out var surface) && surface == Surface.Wall;
+            if (Vector3.Distance(from, to) > StepHeard * (wall ? WallMuffle : 1f)) return;
+            bool alert = guard.Alerted;
+            echoes.Footprint(foot, guard.transform.forward, alert ? new Color(2.6f, 0.3f, 0.1f) : new Color(1.5f, 0.42f, 0.1f), alert ? 5f : 3.5f);
+        }
+
         // Hałas słyszą strażnicy w zasięgu; ściana po drodze go tłumi.
-        void Noise(Vector3 position, float reach)
+        void Noise(Vector3 position, float reach, bool loud = false)
         {
             Vector3 from = position + Vector3.up * 1.2f;
             foreach (var guard in guards)
@@ -367,25 +568,126 @@ namespace Mrok.Game
                 if (Vector3.Distance(from, to) <= reach * (wall ? WallMuffle : 1f))
                 {
                     if (guard.state == Guard.State.Patrol) MarkerSender.Send("alert", guards.IndexOf(guard));
-                    guard.Hear(position);
+                    guard.Hear(position, loud);
                 }
             }
         }
 
         static float FlatDistance(Vector3 a, Vector3 b) => Vector2.Distance(new Vector2(a.x, a.z), new Vector2(b.x, b.z));
 
+        // w sali wyboru podejście do drzwi otwiera poziom
+        void CheckPortals()
+        {
+            foreach (var portal in Level.Portals)
+            {
+                if (FlatDistance(portal.Value + Vector3.forward * Level.Cell / 2f, player.transform.position) > 1.1f) continue;
+                Open(portal.Key);
+                return;
+            }
+        }
+
         void CollectLoot()
         {
             for (int i = loot.Count - 1; i >= 0; i--)
             {
                 if (FlatDistance(loot[i].transform.position, player.transform.position) > 1.1f) continue;
-                foreach (var collider in loot[i].GetComponents<Collider>()) surfaces.Remove(collider);
+                foreach (var collider in loot[i].GetComponentsInChildren<Collider>()) surfaces.Remove(collider);
                 Destroy(loot[i]);
                 loot.RemoveAt(i);
                 effects.pitch = 1f;
                 effects.PlayOneShot(pickup);
-                Say(loot.Count > 0 ? $"Masz {lootTotal - loot.Count} z {lootTotal}." : "Masz wszystko. Szukaj zielonych drzwi.", 4f);
                 MarkerSender.Send("loot", lootTotal - loot.Count);
+            }
+        }
+
+        void CollectStones()
+        {
+            for (int i = pebbles.Count - 1; i >= 0; i--)
+            {
+                if (stones >= MaxStones || FlatDistance(pebbles[i].center, player.transform.position) > 0.9f) continue;
+                Level.Signs.Remove(pebbles[i]);
+                pebbles.RemoveAt(i);
+                stones++;
+                effects.pitch = 0.6f;
+                effects.PlayOneShot(pickup, 0.6f);
+                MarkerSender.Send("stone", stones);
+            }
+        }
+
+        // Rzut: przytrzymany lewy przycisk kołysze siłę i rysuje tor, puszczenie rzuca.
+        void UpdateThrow()
+        {
+            var mouse = Mouse.current;
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            // kliknięcie, które dopiero łapie kursor, nie zaczyna rzutu
+            if (mouse != null && mouse.leftButton.wasPressedThisFrame && lockedBefore && stones > 0 && !flying)
+            {
+                aiming = true;
+                aimAt = Time.time;
+            }
+            lockedBefore = locked;
+
+            if (aiming)
+            {
+                float swing = Mathf.PingPong((Time.time - aimAt) / ThrowSwing, 1f);
+                var eyes = Camera.main.transform;
+                Vector3 direction = Quaternion.AngleAxis(-ThrowLift, eyes.right) * eyes.forward;
+                Vector3 from = eyes.position + eyes.forward * 0.3f - eyes.up * 0.15f + eyes.right * 0.15f;
+                Vector3 velocity = direction * Mathf.Lerp(ThrowSlow, ThrowFast, swing);
+
+                if (mouse == null || !mouse.leftButton.isPressed)
+                {
+                    aiming = false;
+                    flying = true;
+                    stones--;
+                    rockAt = from;
+                    rockVelocity = velocity;
+                    MarkerSender.Send("throw", velocity.magnitude);
+                }
+                else
+                {
+                    // tor do pierwszej przeszkody; na końcu krążek w miejscu upadku
+                    line.Clear();
+                    Vector3 at = from, speed = velocity, normal = Vector3.up;
+                    for (int i = 0; i < 90; i++)
+                    {
+                        Vector3 next = at + speed * 0.035f;
+                        speed += Vector3.down * ThrowGravity * 0.035f;
+                        if (Physics.Linecast(at, next, out var hit))
+                        {
+                            at = hit.point;
+                            normal = hit.normal;
+                            break;
+                        }
+                        at = next;
+                        if (i >= 5) line.Add(at);   // punkty tuż przy oku zasłaniałyby pół ekranu
+                    }
+                    Vector3 side = Vector3.Cross(normal, Mathf.Abs(normal.y) > 0.7f ? Vector3.right : Vector3.up).normalized, other = Vector3.Cross(normal, side);
+                    for (int i = 0; i < 16; i++)
+                        line.Add(at + normal * 0.03f + (side * Mathf.Cos(i * Mathf.PI / 8f) + other * Mathf.Sin(i * Mathf.PI / 8f)) * 0.22f);
+                    marks.Trail(line, new Color(0.75f, 1.5f, 1.9f), 0.05f);
+                }
+            }
+
+            if (flying)
+            {
+                Vector3 next = rockAt + rockVelocity * Time.deltaTime;
+                rockVelocity += Vector3.down * ThrowGravity * Time.deltaTime;
+                line.Clear();
+                line.Add(rockAt);
+                line.Add((rockAt + next) / 2f);
+                line.Add(next);
+                marks.Trail(line, new Color(1.2f, 2.2f, 2.6f), 0.35f);
+                if (Physics.Linecast(rockAt, next, out var hit) || next.y < -1f)
+                {
+                    flying = false;
+                    Vector3 point = hit.collider != null ? hit.point : next;
+                    AudioSource.PlayClipAtPoint(clack, point, 1f);
+                    echoes.Burst(point, hit.collider != null ? hit.normal : Vector3.up, new Color(1.2f, 2.2f, 2.6f), 2.5f);
+                    Noise(point, RockNoise, true);
+                    MarkerSender.Send("rock");
+                }
+                rockAt = next;
             }
         }
 
@@ -394,10 +696,16 @@ namespace Mrok.Game
             if (FlatDistance(Level.ExitPosition, player.transform.position) > 1.3f) return;
             if (loot.Count > 0)
             {
-                Say($"Drzwi. Brakuje jeszcze łupu: {loot.Count}.", 0.5f);
+                // drzwi nie puszczają bez całego łupu: dźwięk i mignięcie brakujących rombów
+                if (Time.time - deniedAt > 2.5f)
+                {
+                    deniedAt = Time.time;
+                    effects.pitch = 1f;
+                    effects.PlayOneShot(deny);
+                }
                 return;
             }
-            End(Phase.Won, win, "Uciekłeś z łupem.\nZamknij oczy na chwilę, aby zagrać jeszcze raz.", "win");
+            End(Phase.Won, win, "ESCAPED", "Close your eyes for a moment to return to the doors.", "win");
         }
 
         void CheckGuards()
@@ -405,26 +713,72 @@ namespace Mrok.Game
             foreach (var guard in guards)
             {
                 if (FlatDistance(guard.transform.position, player.transform.position) > CatchDistance) continue;
-                End(Phase.Caught, caught, "Złapany.\nZamknij oczy na chwilę, aby zacząć od nowa.", "caught");
+                End(Phase.Caught, caught, "CAUGHT", "Close your eyes for a moment to try again.", "caught");
                 return;
             }
         }
 
-        void End(Phase result, AudioClip sound, string text, string marker)
+        void End(Phase result, AudioClip sound, string heading, string text, string marker)
         {
             phase = result;
             player.frozen = true;
             foreach (var guard in guards) guard.enabled = false;
             effects.pitch = 1f;
             effects.PlayOneShot(sound);
-            Say(text, 600f);
+            title.text = Spaced(heading);
+            body.text = text;
+            footer.text = "";
+            curtainTarget = 0.82f;
             MarkerSender.Send(marker);
+        }
+
+        // ---------- ekran ----------
+
+        void UpdateHud()
+        {
+            // kurtyna i jej tekst gasną i wracają razem
+            float alpha = Mathf.MoveTowards(curtain.color.a, curtainTarget, Time.deltaTime * 1.4f);
+            curtain.color = new Color(0f, 0f, 0f, alpha);
+            float text = Mathf.Clamp01(alpha / Mathf.Max(curtainTarget, 0.5f));
+            SetAlpha(title, text);
+            SetAlpha(body, text);
+            SetAlpha(footer, text);
+
+            bool denied = Time.time - deniedAt < 0.6f;
+            int have = lootTotal - loot.Count;
+            for (int i = 0; i < pips.Count; i++)
+            {
+                pips[i].enabled = phase == Phase.Play;
+                pips[i].color = i < have ? new Color(1f, 0.82f, 0.25f) : denied ? new Color(0.9f, 0.25f, 0.2f) : new Color(1f, 1f, 1f, 0.16f);
+            }
+
+            for (int i = 0; i < dots.Count; i++)
+            {
+                dots[i].enabled = phase == Phase.Play && i < stones;
+                dots[i].rectTransform.anchoredPosition = new Vector2((i - (stones - 1) / 2f) * 12f, 11f);
+            }
+
+            if (Time.time > toastUntil) toast.text = "";
+            if (!showDebug) return;
+            status.text = $"{Level.Current.title}  loot {have}/{lootTotal}  {phase}\n" + (keyboardMode
+                ? "KEY mode: space controls, EEG is only recorded"
+                : BridgeAlive ? "EEG mode: headset controls, space logs ground truth"
+                              : "EEG mode: no BCI pipeline, space controls") +
+                "\nF1 debug   F2 KEY / EEG   1-3 level   R retry";
+            ShowSignals();
+        }
+
+        static void SetAlpha(Graphic graphic, float alpha)
+        {
+            Color color = graphic.color;
+            color.a = alpha;
+            graphic.color = color;
         }
 
         void ShowSignals()
         {
             builder.Clear();
-            builder.AppendLine("SYGNAŁY");
+            builder.AppendLine("SIGNALS");
             foreach (var signal in SignalHub.All)
             {
                 bool fresh = SignalHub.TryGet(signal.name, out float value);
@@ -434,13 +788,12 @@ namespace Mrok.Game
             foreach (var binding in bindings.config.bindings)
             {
                 builder.Append(binding.action).Append(" ← ").Append(binding.source ?? binding.signal).Append("  ");
-                builder.AppendLine(binding.live ? binding.value.ToString("+0.00;-0.00") : "brak sygnału");
+                builder.AppendLine(binding.live ? binding.value.ToString("+0.00;-0.00") : "no signal");
             }
             // klatki na sekundę: wolna pętla gry opóźnia reakcję na sygnał z opaski
             fps = Mathf.Lerp(fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 1e-4f), 0.05f);
-            builder.Append("klatki/s ").AppendLine(fps.ToString("0"));
-            bool bridge = BridgeAlive;
-            builder.Append(bridge ? "potok BCI: " + UdpSignalSource.LastSender : "potok BCI: brak danych");
+            builder.Append("fps ").AppendLine(fps.ToString("0"));
+            builder.Append(BridgeAlive ? "BCI pipeline: " + UdpSignalSource.LastSender : "BCI pipeline: no data");
             signals.text = builder.ToString();
         }
     }

@@ -18,7 +18,7 @@ namespace Bci.Signals
         public bool invert;
         public float smoothing;        // stała czasowa wygładzania w sekundach
         public float threshold = 0.5f; // próg dla Held()
-        public string key;             // klawisze symulujące sygnał: "arrows" albo "space"
+        public string key;             // klawisze symulujące sygnał: "arrows", "space" albo nazwa klawisza, np. "f"
 
         [NonSerialized] public float value;
         [NonSerialized] public bool held;

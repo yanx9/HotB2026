@@ -1,13 +1,12 @@
 // Chmura punktów ze skanu. Każdy punkt to czworokąt zwrócony do kamery; pojawia się, gdy
 // dotrze do niego fala skanu (odległość / prędkość fali), błyska i powoli gaśnie.
-// uv: narożnik czworokąta (-1..1), uv2: (czas skanu, odległość od miejsca skanu).
+// uv: narożnik czworokąta (-1..1), uv2: (czas skanu, odległość od miejsca skanu, czas gaśnięcia).
 Shader "Mrok/PointCloud"
 {
     Properties
     {
         _Size ("Rozmiar punktu (m)", Float) = 0.028
         _MinPixels ("Najmniejszy rozmiar (px)", Float) = 1.5
-        _Life ("Czas gasniecia (s)", Float) = 14
         _WaveSpeed ("Predkosc fali (m/s)", Float) = 28
     }
 
@@ -32,7 +31,7 @@ Shader "Mrok/PointCloud"
             {
                 float4 positionOS : POSITION;
                 float2 corner : TEXCOORD0;
-                float2 scan : TEXCOORD1;
+                float3 scan : TEXCOORD1;
                 float4 color : COLOR;
             };
 
@@ -46,7 +45,6 @@ Shader "Mrok/PointCloud"
             CBUFFER_START(UnityPerMaterial)
                 float _Size;
                 float _MinPixels;
-                float _Life;
                 float _WaveSpeed;
             CBUFFER_END
 
@@ -56,8 +54,11 @@ Shader "Mrok/PointCloud"
             {
                 Varyings o;
                 float age = _Now - v.scan.x - v.scan.y / _WaveSpeed;
-                float fade = saturate(1.0 - age / _Life);
-                float brightness = fade * fade + 2.5 * exp(-max(age, 0.0) * 5.0);
+                float fade = saturate(1.0 - age / max(v.scan.z, 0.01));
+                // każdy punkt migocze we własnym rytmie, żeby stopklatka nie była martwa
+                float seed = frac(sin(dot(v.positionOS.xyz, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+                float shimmer = 0.82 + 0.18 * sin(_Now * (1.5 + 2.0 * seed) + seed * 6.2832);
+                float brightness = fade * fade * shimmer + 2.5 * exp(-max(age, 0.0) * 5.0);
 
                 float4 center = TransformObjectToHClip(v.positionOS.xyz);
                 // rozmiar liczony z prawdziwej odległości, nie z głębi: inaczej punkty pod nogami,

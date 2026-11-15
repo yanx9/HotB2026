@@ -79,13 +79,28 @@ class PipelineTests(unittest.TestCase):
     def test_classifier_without_profile_sends_heuristics(self):
         node = SignalClassifier()
         node.setup({}, context())
-        self.assertEqual(node.names, ["laterality", "laterality_valid", "jaw", "jaw_valid", "focus", "focus_valid"])
+        self.assertEqual(node.names, ["laterality", "laterality_valid", "jaw", "jaw_active", "jaw_valid", "focus", "focus_valid"])
         demo = DemoSource()
         rest, t = feed(node, "rest", 6, demo, 0.0)
         self.assertEqual((rest["jaw_valid"], rest["laterality_valid"], rest["focus_valid"]), (1, 1, 1))
         self.assertLess(rest["jaw"], .2)
         clench, t = feed(node, "jaw", 1, demo, t)
         self.assertGreater(clench["jaw"], .8)
+        self.assertEqual((rest["jaw_active"], clench["jaw_active"]), (0, 1))
+
+    def test_profile_without_jaw_calibration_still_reports_clench(self):
+        profile = dict(self.profile, calibrations={k: v for k, v in self.profile["calibrations"].items() if k != "jaw"})
+        node = SignalClassifier(profile)
+        node.setup({}, context())
+        demo = DemoSource()
+        rest, t = feed(node, "rest", 6, demo, 0.0)
+        self.assertEqual((rest["jaw_active"], rest["jaw_valid"], rest["eyes_closed_valid"]), (0, 1, 1))
+        clench, t = feed(node, "jaw", 1, demo, t)
+        self.assertEqual((clench["jaw_active"], clench["jaw_valid"]), (1, 1))
+        # the uncalibrated clench is a button for games; it does not gate the calibrated eye detector
+        self.assertEqual(clench["eyes_closed_valid"], 1)
+        rest, t = feed(node, "rest", 2, demo, t)
+        self.assertEqual(rest["jaw_active"], 0)
 
     def test_classifier_refuses_wrong_layout_and_converts_volts(self):
         with self.assertRaises(ValueError):
