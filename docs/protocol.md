@@ -1,6 +1,6 @@
 # Protokół
 
-Kontrakt między częścią pythonową (`bci/`) a dowolną grą Unity (`unity/`, `precel/` i kolejnymi). Zmieniając format, zmieniajcie ten plik w tym samym commicie co kod po obu stronach. Kalibracja i profile: [calibration.md](calibration.md).
+Kontrakt między częścią pythonową (`bci/`) a grą Unity (`mrok/`, Beyond the Darkness) i każdą kolejną. Zmieniając format, zmieniajcie ten plik w tym samym commicie co kod po obu stronach. Kalibracja i profile: [calibration.md](calibration.md).
 
 ```
 Unicorn Hybrid Black
@@ -46,18 +46,12 @@ Kalibrator buduje ten sam początek potoku (`build_front` w `gpype_nodes.py`), w
 {"type": "metric", "name": "focus", "value": 0.62, "t": 1794614400.15}
 ```
 
-- `command` — dyskretne zdarzenie (wybór P300, decyzja klasyfikatora). Wysyłane raz, w chwili, gdy zajdzie.
+- `command` — dyskretne zdarzenie (decyzja klasyfikatora). Wysyłane raz, w chwili, gdy zajdzie.
 - `metric` — wartość ciągła (np. neurofeedback z mocy pasm). Wysyłana regularnie, ok. 10 Hz.
 
 ### Komendy
 
-| `name` | Paradygmat | Co robi w grze |
-|---|---|---|
-| `select` | P300 (auditory oddball) | "to ten motyw" w trakcie rozpoznawania; w ogrodzie zaczyna kolejną lekcję |
-| `left` | motor imagery, lewa ręka | nastrój chłodny, muzyka przechodzi w moll |
-| `right` | motor imagery, prawa ręka | nastrój ciepły, muzyka durowa i jaśniejsza |
-
-Nastrój utrzymuje się 4 s po ostatniej komendzie `left`/`right`, potem wraca do neutralnego. Klasyfikator może więc wysyłać decyzję co ok. 0,5–1 s, dopóki stan trwa.
+Gra ich nie używa; słucha samych metryk. Z profilem kalibracji potok nadal wysyła `left` / `right` co 0,5 s, dopóki trwa wykryte wyobrażenie ruchu dłoni (wartość to wynik 0–1). `--no-commands` je wyłącza.
 
 ### Metryki
 
@@ -89,49 +83,22 @@ Format datagramu nie zmienia się. Brak modelu, nieudana kalibracja i nieprawid�
 
 | Gra | Sygnały |
 |---|---|
-| Ogród dźwięków (`unity/`) | komendy `select`, `left`, `right`; metryka `focus` |
-| Krojenie precla (`precel/`) | `laterality` przesuwa nóż, `jaw_active` tnie (bez profilu kalibracji zastępczo `jaw`). Powiązania są w `precel/Assets/Resources/signals.json` |
-| Mrok (`mrok/`) | `eyes_closed_active` z profilu kalibracji: zamknięte oczy ładują skan. Powiązanie jest w `mrok/Assets/Resources/signals.json` |
+| Beyond the Darkness (`mrok/`) | `eyes_closed_active`: zamknięte oczy ładują skan; `jaw_active`: zaciśnięta szczęka to sprint. Powiązania są w `mrok/Assets/Resources/signals.json` |
 
 Gry z pakietem `shared/bci-signals` przyjmują każdy sygnał o dowolnej nazwie i respektują flagi `<sygnał>_valid`: sygnał z `valid=0` liczy się jak brak sygnału. Kilka gier naraz obsługuje `--target host:port` w potoku (każda gra na własnym porcie z `signals.json`).
 
 ## 3. Znaczniki: Unity → `bci/`
 
-Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Potok kładzie każdy znacznik na próbce EEG z chwili odbioru, w nagraniu sesji `data/raw/<sesja>_<czas>/` ([recording.md](recording.md)). Dokładność to kilka ms plus stałe ~40 ms Bluetooth opaski. Wystarcza to do oceny sygnałów trwających sekundy (oczy, szczęka). Cięcie na epoki P300 wymaga jeszcze pomiaru opóźnienia dźwięku w grze.
+Gra wysyła znacznik przy każdym zdarzeniu rozgrywki. Potok kładzie każdy znacznik na próbce EEG z chwili odbioru, w nagraniu sesji `data/raw/<sesja>_<czas>/` ([recording.md](recording.md)). Dokładność to kilka ms plus stałe ~40 ms Bluetooth opaski. Wystarcza to do oceny sygnałów trwających sekundy (oczy, szczęka).
 
 - **Transport:** UDP na port `5006` komputera, z którego przychodzi sygnał BCI (dopóki nic nie przyszło: `127.0.0.1`). Ten sam format JSON, `type` = `"marker"`.
 - **Odbiór, jeden proces na porcie**:
   - `bci_pipeline.py` zapisuje je do `data/raw/bci_markers_*.jsonl`. Pola: `marker`, `value`, `t_game_unix` (czas z gry) i `t_received_unix`. Ścieżkę zmienia `--marker-file`.
   - `python bci/marker_logger.py` zapisuje CSV w `data/raw/`. Jeśli działa obok potoku, potok musi mieć `--no-markers`.
-- Gra zapisuje też własną kopię CSV w `Application.persistentDataPath`.
-- `value` to numer rośliny (0–3), a dla `grow` nowy poziom rośliny.
 
-| `name` | Kiedy |
-|---|---|
-| `session_start` | start gry |
-| `learn` | początek lekcji (słuchanie motywu) |
-| `pattern` | odtworzenie motywu wzorcowego |
-| `recognize` | początek fazy rozpoznawania |
-| `target` / `distractor` | początek sekwencji: motyw albo sekwencja myląca |
-| `hit` / `false_alarm` / `miss` | odpowiedź gracza: trafienie, reakcja na złą sekwencję, brak reakcji na motyw |
-| `grow` | roślina urosła |
-| `mute` / `unmute` | gracz wyciszył lub włączył roślinę |
-| `garden` | powrót do ogrodu |
+Plik znaczników przechowuje czas z gry i czas odbioru; nie synchronizuje zegarów dwóch komputerów.
 
-Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w której dźwięk wyszedł z głośnika. Plik znaczników przechowuje czas z gry i czas odbioru; nie synchronizuje zegarów dwóch komputerów ani toru audio. Przed kalibracją P300 potrzebny jest pomiar opóźnień i synchronizacja z czasami próbek.
-
-### Znaczniki gry Krojenie precla
-
-| `name` | `value` | Kiedy |
-|---|---|---|
-| `session_start` | 0 | start gry |
-| `round_start` | numer precla (1–5) | precel spada na deskę |
-| `cut_start` | pozycja noża | sygnał cięcia przekroczył próg, nóż zaczyna opadać |
-| `cut` | pozycja noża | precel przecięty |
-| `result` | różnica masy połówek w % | połówki zważone |
-| `summary` | suma punktów | koniec zawodów |
-
-### Znaczniki gry Mrok
+### Znaczniki gry Beyond the Darkness
 
 | `name` | `value` | Kiedy |
 |---|---|---|
@@ -140,8 +107,12 @@ Czas `t` znacznika to chwila zlecenia odtworzenia dźwięku, nie chwila, w któr
 | `eyes_open` | czas zamknięcia w s | gra uznała oczy za otwarte |
 | `truth_closed` | 0 | gracz wcisnął spację: ma zamknięte oczy (prawda do oceny detektora, w obu trybach) |
 | `truth_open` | czas trzymania w s | gracz puścił spację |
+| `sprint_on` / `sprint_off` | 0 / czas biegu w s | gra włączyła i wyłączyła sprint |
+| `truth_jaw_on` / `truth_jaw_off` | 0 / czas trzymania w s | gracz wcisnął i puścił F: zaciska szczękę (prawda do oceny detektora) |
 | `mode_keyboard` / `mode_eeg` | 0 | tryb sterowania oczami (F2); wysyłany też po każdym `session_start` |
 | `scan` | zasięg skanu w m | skan po otwarciu oczu |
 | `alert` | numer strażnika | strażnik usłyszał hałas |
 | `loot` | liczba zebranych | gracz zabrał łup |
+| `level` | numer poziomu (0 to sala z drzwiami) | start poziomu |
+| `stone` / `throw` / `rock` | liczba kamieni / prędkość rzutu / 0 | kamień podniesiony, rzucony, upadł |
 | `caught` / `win` | 0 | koniec gry |

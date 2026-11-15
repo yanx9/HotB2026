@@ -116,11 +116,9 @@ Niezależny od gier format UDP pozostaje płaski: `type`, `name`, `value`, `t`. 
 | `laterality_valid` | 0 albo 1 | ważność osi; równoczesna aktywacja obu rąk daje nieważne zero |
 | `focus`, `focus_valid` | 0–1 | dotychczasowa, **nieskalibrowana** heurystyka i ważność |
 
-`active=0` nie oznacza błędu pomiaru; do tego służy `valid=0`. Przy braku modelu albo artefakcie potok wysyła neutralne zero zamiast starej wartości. Wyjątek: detektor z `hold_s > 0` (oczy) przez ten czas trzyma ostatnią decyzję z `valid=1`; gdy dane z opaski ustaną, przestaje nadawać i gra po sekundzie uznaje sygnał za nieobecny. Kalibrowana aktywność szczęki blokuje wyniki oczu i rąk, lecz ten mechanizm nie jest pełnym systemem usuwania EMG. Potok dodatkowo wysyła komendy `left`/`right` co 0,5 s podczas potwierdzonej aktywacji, zgodne z odbiornikiem ogrodu. `--no-commands` pozostawia same metryki. Wartość komendy to wynik 0–1, nie skalibrowane prawdopodobieństwo.
+`active=0` nie oznacza błędu pomiaru; do tego służy `valid=0`. Przy braku modelu albo artefakcie potok wysyła neutralne zero zamiast starej wartości. Wyjątek: detektor z `hold_s > 0` (oczy) przez ten czas trzyma ostatnią decyzję z `valid=1`; gdy dane z opaski ustaną, przestaje nadawać i gra po sekundzie uznaje sygnał za nieobecny. Kalibrowana aktywność szczęki blokuje wyniki oczu i rąk, lecz ten mechanizm nie jest pełnym systemem usuwania EMG. Potok dodatkowo wysyła komendy `left`/`right` co 0,5 s podczas potwierdzonej aktywacji. `--no-commands` pozostawia same metryki. Wartość komendy to wynik 0–1, nie skalibrowane prawdopodobieństwo.
 
-- **Ogród**: obsługuje `left`, `right`, `focus`. Kalibracja nie generuje P300 ani komendy `select`.
-- **Precel**: `laterality` i `jaw_active` (bez profilu zastępczo `jaw`); mapowanie na akcje jest w `Resources/signals.json`.
-- **Mrok**: `eyes_closed_active` steruje zamykaniem oczu i ładowaniem skanu; wymaga profilu z kalibracją oczu.
+- **Beyond the Darkness** (`mrok/`): `eyes_closed_active` steruje zamykaniem oczu i ładowaniem skanu (wymaga profilu z kalibracją oczu), `jaw_active` sprintem.
 - **Nowe gry**: odbierają ten sam protokół i przypisują nazwy do swoich akcji. Kod kalibracji, profile i potok pozostają bez zmian.
 
 Przy dwóch grach jednocześnie użyj różnych portów odbiorczych:

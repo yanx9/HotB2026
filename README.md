@@ -1,6 +1,6 @@
-# HotB2026 — BCI w neurorehabilitacji, rozrywce i sztuce
+# Beyond the Darkness — HotB2026, BCI w neurorehabilitacji, rozrywce i sztuce
 
-Projekt hackathonowy z wykorzystaniem **g.tec Unicorn Hybrid Black** — 8-kanałowego, bezprzewodowego systemu EEG do rozwoju BCI.
+Projekt hackathonowy z wykorzystaniem **g.tec Unicorn Hybrid Black** — 8-kanałowego, bezprzewodowego systemu EEG do rozwoju BCI. Powstała z niego jedna gra: **Beyond the Darkness**, skradanka w ciemności, w której zamknięcie oczu skanuje otoczenie.
 
 ## Wyzwanie
 
@@ -19,66 +19,15 @@ Możliwe kierunki:
 - **Sprzęt:** g.tec Unicorn Hybrid Black (8 kanałów EEG)
 - **Strumieniowanie danych:** Unicorn → g.Pype → filtrowanie / klasyfikacja → UDP JSON → Unity
 - **Integracje:** Python, Unity
-- **Paradygmaty BCI:** P300, analiza widmowa sygnału
+- **Sygnały:** alfa nad potylicą i potencjał powiek (zamknięte oczy), EMG szczęki (zaciśnięcie)
 
 ## Zespół
 
 <!-- 3–4 osoby -->
 
-## Gra: Ogród dźwięków
+## Gra: Beyond the Darkness (`mrok/`)
 
-Spokojna gra 2D do treningu słuchowego. Każda roślina to instrument z własnym motywem. Gracz poznaje motyw, potem rozpoznaje go wśród podobnych sekwencji; po trzech trafieniach roślina rośnie i jej głos dołącza do wspólnej kompozycji.
-
-Rola EEG:
-
-| Sygnał | W grze |
-|---|---|
-| P300 (`select`) | odpowiedź "to ten motyw" w zadaniu typu auditory oddball |
-| Motor imagery (`left` / `right`) | nastrój ogrodu: chłodny i molowy albo ciepły i durowy |
-| Skupienie (`focus`) | neurofeedback: liczba świetlików i jasność roślin |
-
-Dopóki klasyfikatory nie są skalibrowane, te same zdarzenia daje klawiatura. Gra wysyła znaczniki bodźców do `bci/`, żeby nagrania z rozgrywki posłużyły do kalibracji.
-
-**Uruchomienie:** otwórz `unity/` w Unity 6000.6.9f1 i wciśnij Play w `Assets/Scenes/SampleScene`. Cała scena, grafika i dźwięk powstają z kodu.
-
-| Klawisz | Działanie |
-|---|---|
-| klik w roślinę / 1–4 | zacznij lekcję tej rośliny |
-| Spacja | symulacja P300: start rozpoznawania, "to ten motyw" |
-| ← / → | symulacja motor imagery: nastrój |
-| ↑ / ↓ | symulacja skupienia |
-| R | powtórz motyw |
-| prawy przycisk myszy | wycisz / włącz roślinę |
-| Esc | przerwa, powrót do ogrodu |
-
-Trudność rośnie z poziomem rośliny, po jednej zmianie naraz: sekwencje wyraźnie inne → różnica jednej nuty → zamieniona kolejność nut i inna barwa.
-
-**Muzyka:** każda roślina ma motyw zapisany w `unity/Assets/Resources/music_bank.json` (stopnie skali; 4 takty, 4/4, 80 BPM). `PhraseComposer` układa z niego pulę fraz dla każdego poziomu rośliny: motyw wprost, w odwróceniu, od końca i z nutami przejściowymi, przeniesiony na kolejne akordy i zagrany w rytmie właściwym dla instrumentu (bas na „raz” i na „i” trzeciej miary, struna ósemkami z pauzami, dzwonek rzadko i synkopami, flet długimi nutami z ozdobnikami). Nuty mają akcenty i drobny rozrzut w czasie. Ogród gra frazę po frazie według formy A A B A C A D E, a rośliny wchodzą w nią z przesunięciem. Do puli trafiają też frazy wpisane w banku (`phrases`), czyli miejsce na materiał z LLM. Każda fraza przechodzi walidację (`MusicValidator`); dźwięk syntezuje `Synth`.
-
-**Obraz:** pixel art 320×180 powiększany bez wygładzania. Wszystko rysuje kod (`PixelArt`): cztery gatunki roślin w czterech stadiach wzrostu (dzwonki, trzciny, wierzba, grzyby), drzewa tła, wzgórza, trawa. Scena chodzi według zegara muzyki: szader `PixelSprite` kołysze koronami, trzcinami i trawą w rytm uderzeń, świecące części roślin pulsują, każda roślina podskakuje na własne nuty, a szader `PixelSky` rysuje gwiazdy migające w rytm, księżyc i zorzę, która jaśnieje, gdy gra więcej roślin, i przyjmuje kolor nastroju.
-
-**Kod** (`unity/Assets/Scripts/`): `Brain/` to warstwa wejścia (zdarzenia `BrainInput`, symulator klawiatury, odbiornik UDP, znaczniki), `Music/` to bank, kompozytor fraz, walidator i syntezator, `Garden/` to rozgrywka i grafika. Szadery są w `unity/Assets/Resources/Shaders/`.
-
-## Druga gra: Mistrzostwa w krojeniu precla na pół (`precel/`)
-
-Osobny projekt Unity (3D, URP). Namiot piwny, deska, precel i nóż. Ruch ręki przesuwa nóż w lewo i w prawo, zaciśnięcie szczęki opuszcza go na precla. Połówki lądują na wadze szalkowej; wygrywa najmniejsza różnica masy. Zawody to pięć precli, po 25 s na każdy.
-
-**Uruchomienie:** otwórz `precel/` w Unity 6000.6.9f1 i wciśnij Play w `Assets/Scenes/SampleScene`. Scena, precle, tekstury i dźwięk powstają z kodu.
-
-| Klawisz | Udaje sygnał | Działanie |
-|---|---|---|
-| ← / → (albo A / D) | `laterality` | nóż w lewo i w prawo |
-| Spacja (trzymaj ok. 0,8 s) | `jaw` | cięcie; puszczona wcześniej cofa nóż |
-
-**Sygnały:** gra nie zna EEG. Korzysta ze wspólnej warstwy `shared/bci-signals` (opis niżej); `Resources/signals.json` wiąże czynności `steer` i `cut` z sygnałami `laterality` i `jaw_active` (zastępczo `jaw`, gdy potok działa bez profilu kalibracji). Panel w rogu ekranu pokazuje wszystkie docierające sygnały na żywo.
-
-**Masa:** precel to zamknięta siatka (rura o zmiennej grubości po krzywej). `MeshSlicer` tnie ją płaszczyzną noża, zamyka przekroje denkami i liczy objętość każdej części z sumy czworościanów ze znakiem. Masa to objętość razy gęstość, więc nie zależy od liczby trójkątów. Każdy precel ma inny kształt, grubość i obrót, więc połowa masy nie leży w połowie szerokości.
-
-**Pod EEG:** cięcie bierze pozycję noża sprzed 0,4 s, bo zaciśnięcie szczęki zakłóca sygnał sterujący. Nóż ma bezwładność, która wygładza szum.
-
-## Trzecia gra: Mrok (`mrok/`)
-
-Osobny projekt Unity (3D, URP). Skradanka z pierwszej osoby w zupełnej ciemności: nic nie ma wyglądu, widać tylko chmurę punktów zostawioną przez skan. Zamknięte oczy ładują skan; po otwarciu fala punktów odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy były zamknięte (od 4 m po 0,5 s do 28 m po 6 s). Strażnicy na stopklatce zostają tam, gdzie byli, a naprawdę idą dalej. Trzeba zebrać łup i dojść do zielonych drzwi. Gra jest po angielsku.
+Projekt Unity (3D, URP) w folderze `mrok/`, od roboczej nazwy gry. Skradanka z pierwszej osoby w zupełnej ciemności: nic nie ma wyglądu, widać tylko chmurę punktów zostawioną przez skan. Zamknięte oczy ładują skan; po otwarciu fala punktów odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy były zamknięte (od 4 m po 0,5 s do 28 m po 6 s). Strażnicy na stopklatce zostają tam, gdzie byli, a naprawdę idą dalej. Trzeba zebrać łup i dojść do zielonych drzwi. Gra jest po angielsku.
 
 | | |
 |---|---|
@@ -133,9 +82,9 @@ W czasie rozgrywki nie ma napisów. Tekst jest tylko na ekranie ładowania i po 
 
 Pad: lewa gałka ruch, prawa gałka obrót, **prawy spust (trzymaj i puść) rzut kamieniem**, B albo lewy bumper skradanie, A jak spacja (zamknięte oczy), lewy spust jak F (zaciśnięta szczęka), Start ponowienie, Select powrót do sali z drzwiami.
 
-## Wspólna warstwa sygnałów (`shared/bci-signals`)
+## Warstwa sygnałów (`shared/bci-signals`)
 
-Lokalny pakiet Unity używany przez `precel/` i `mrok/` (wpis `com.hotb.bci-signals` w `Packages/manifest.json`). Nową grę podłącza się tym samym wpisem i własnym plikiem `Resources/signals.json`.
+Lokalny pakiet Unity, przez który gra odbiera sygnały (wpis `com.hotb.bci-signals` w `mrok/Packages/manifest.json`). Nie zna on gry: kolejną podłącza się tym samym wpisem i własnym plikiem `Resources/signals.json`.
 
 - `SignalHub`: tablica nazwanych sygnałów (nazwa, liczba, źródło). Gra nie wie, skąd pochodzą.
 - `UdpSignalSource`: wpisuje do tablicy wszystko, co nadaje potok g.Pype (`bci/bci_pipeline.py`), bez listy znanych nazw.
@@ -143,21 +92,17 @@ Lokalny pakiet Unity używany przez `precel/` i `mrok/` (wpis `com.hotb.bci-sign
 - `SignalBindings`: wiąże czynność gry z sygnałem i ustawia wzmocnienie, martwą strefę, wygładzanie i próg. Respektuje flagi `<sygnał>_valid` z potoku: sygnał oznaczony jako nieważny liczy się jak brak sygnału. Pole `fallback` wskazuje sygnał zastępczy.
 - `MarkerSender`: znaczniki zdarzeń gry odsyłane do potoku.
 
-Ogród dźwięków (`unity/`) ma starszą, własną warstwę (`Brain/`) opartą na komendach `select` / `left` / `right`, które potok nadal nadaje.
-
 ## Struktura
 
 | Folder | Zawartość |
 |---|---|
 | `bci/` | Python: potok g.Pype (Unicorn, filtry, klasyfikator, nadajnik UDP JSON), kalibrator, profile |
-| `unity/` | projekt Unity z grą Ogród dźwięków |
-| `precel/` | projekt Unity z grą Mistrzostwa w krojeniu precla na pół |
-| `mrok/` | projekt Unity z grą Mrok |
-| `shared/bci-signals/` | pakiet Unity: warstwa sygnałów wspólna dla gier |
+| `mrok/` | projekt Unity z grą Beyond the Darkness |
+| `shared/bci-signals/` | pakiet Unity: warstwa sygnałów, przez którą gra odbiera dane z potoku |
 | `docs/protocol.md` | kontrakt między `bci/` a grą: potok, porty, format wiadomości |
 | `docs/calibration.md` | obsługa kalibratora, profile, uruchomienie potoku i testy |
-| `docs/recording.md` | nagrywanie sesji, tryby Mroka, ocena detektorów oczu i szczęki (`evaluate.py`) |
-| `data/` | nagrania EEG (`data/raw/` nie trafia do repo) |
+| `docs/recording.md` | nagrywanie sesji, tryby gry, ocena detektorów oczu i szczęki (`evaluate.py`), szybkie detektory i ich strojenie (`tune_fast.py`) |
+| `data/` | profile kalibracji (`data/calibration/`) i nagrania EEG (`data/raw/`, nie trafia do repo) |
 
 ## Uruchomienie
 
@@ -189,14 +134,15 @@ python bci/bci_pipeline.py                                           # bez profi
 python bci/bci_pipeline.py --host <IP komputera z grą>
 ```
 
-- **Z profilem** potok wysyła `eyes_closed`, `right_hand`, `left_hand`, `jaw` z flagami `_active` i `_valid`, `laterality`, `focus` oraz komendy `left` / `right` dla ogrodu. Brakująca lub nieudana kalibracja daje neutralne zero z `valid=0`.
-- **Bez profilu** wysyła heurystyki `focus`, `laterality` i `jaw` liczone względem ostatniej minuty. Wystarczą do ogrodu i precla; Mrok wymaga profilu z kalibracją oczu.
+- **Z profilem** potok wysyła `eyes_closed`, `right_hand`, `left_hand`, `jaw` z flagami `_active` i `_valid`, `laterality` i `focus`. Brakująca lub nieudana kalibracja daje neutralne zero z `valid=0`; szczękę potok liczy wtedy heurystycznie. Gra używa `eyes_closed_active` i `jaw_active`.
+- **Bez profilu** wysyła heurystyki `focus`, `laterality` i `jaw` liczone względem ostatniej minuty. Do gry to za mało: oczy wymagają profilu z kalibracją.
+- **Profil z szybkimi detektorami** (`tune_fast.py`) skraca opóźnienie oczu z ok. 1,5–2 s do ułamka sekundy; opis w [docs/recording.md](docs/recording.md).
 - Okno g.Pype pokazuje EEG po filtrach i sygnały idące do gry. `--no-gui` je wyłącza (na macOS sterownik Unicorna potrzebuje pętli zdarzeń okna, więc tam zostawcie okno).
 - Znaczniki gier z portu 5006 zapisują się do `data/raw/bci_markers_*.jsonl`.
-- Każda sesja nagrywa się do `data/raw/<sesja>_<czas>/`: surowe i przefiltrowane EEG, znaczniki gry na próbkach EEG i wyjście detektora (`--session mrok_s01`, `--no-record` wyłącza). Kalibrator nagrywa się tak samo. Ocena: `python bci/evaluate_eyes.py <folder>`. Pełna instrukcja: [docs/recording.md](docs/recording.md).
-- Kilka gier naraz: `--target host:port` (każda gra na własnym porcie).
+- Każda sesja nagrywa się do `data/raw/<sesja>_<czas>/`: surowe i przefiltrowane EEG, znaczniki gry na próbkach EEG i wyjście detektora (`--session mrok_s01`, `--no-record` wyłącza). Kalibrator nagrywa się tak samo. Ocena: `python bci/evaluate.py <folder>`. Pełna instrukcja: [docs/recording.md](docs/recording.md).
+- Kilku odbiorców naraz: `--target host:port`.
 
-**Kalibracja:** `bci/calibrate.py` ma cztery widoki: oczy zamknięte, wyobrażanie ruchu prawej dłoni, lewej dłoni oraz szczęka (EMG). Uruchamia w swoim procesie ten sam początek potoku (`HybridBlack → filtry`) i zapisuje wspólny dla wszystkich gier profil JSON. Opaskę trzyma naraz jeden proces: po kalibracji wybierzcie „Rozłącz” albo zamknijcie kalibrator, potem uruchomcie `bci_pipeline.py`. Pełna instrukcja: [docs/calibration.md](docs/calibration.md).
+**Kalibracja:** `bci/calibrate.py` ma cztery widoki: oczy zamknięte, wyobrażanie ruchu prawej dłoni, lewej dłoni oraz szczęka (EMG). Uruchamia w swoim procesie ten sam początek potoku (`HybridBlack → filtry`) i zapisuje profil JSON. Gra korzysta z oczu i szczęki. Opaskę trzyma naraz jeden proces: po kalibracji wybierzcie „Rozłącz” albo zamknijcie kalibrator, potem uruchomcie `bci_pipeline.py`. Pełna instrukcja: [docs/calibration.md](docs/calibration.md).
 
 Bez opaski, na syntetycznym EEG (ten sam potok, źródło `SyntheticUnicorn` zamiast `HybridBlack`):
 
@@ -206,21 +152,12 @@ python bci/bci_pipeline.py --fake --allow-simulated --profile data/calibration/f
 python bci/bci_pipeline.py --fake               # heurystyki; zadania zmieniają się w 27-sekundowym cyklu
 ```
 
-### Atrapa sygnału (bez g.Pype)
-
-`bci/mock_sender.py` wysyła do gry fałszywe komendy i metrykę `focus` w formacie z `docs/protocol.md`. Nie wymaga żadnych pakietów (na macOS zamiast `python` może być potrzebne `python3`).
-
-```
-python bci/mock_sender.py                # losowe komendy co 2–4 s + płynnie zmieniający się focus
-python bci/mock_sender.py --interactive  # wpisujesz np. "left" albo "focus 0.8"
-```
-
 ### Znaczniki do CSV
 
 ```
 python bci/marker_logger.py              # opcjonalny CSV; potok uruchomcie wtedy z --no-markers (ten sam port)
 ```
 
-### Unity (`unity/`)
+### Unity (`mrok/`)
 
-Cały zespół używa tej samej wersji Unity: 6000.6.9f1 (zapisana w `unity/ProjectSettings/ProjectVersion.txt`).
+Cały zespół używa tej samej wersji Unity: 6000.6.9f1 (zapisana w `mrok/ProjectSettings/ProjectVersion.txt`).
