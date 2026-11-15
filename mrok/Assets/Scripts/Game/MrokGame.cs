@@ -121,6 +121,7 @@ namespace Mrok.Game
         static void StartAtTheDoors()
         {
             levelIndex = Levels.Hub;
+            Guard.Pace = 1f;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
