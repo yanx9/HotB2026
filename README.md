@@ -100,7 +100,12 @@ Potok liczy szczękę także bez jej kalibracji (heurystyka względem spoczynku)
 
 **Zasady**
 
-- **Strażnicy nie widzą, ale słyszą:** kroki (bieg z 10 m, chód z 6 m, skradanie z 3 m) oraz skan, tym dalej, im większy (55% jego zasięgu). Mur tłumi hałas. Idą w to miejsce, nasłuchują i wracają na trasę. Złapanie to dotknięcie.
+- **Otwarte oczy to presja, zamknięte to schronienie** (gałąź `calm`):
+  - skan po długim, spokojnym zamknięciu oczu (3,5 s i więcej) słychać tylko z 2 m; pospieszny (pół sekundy) z 12 m,
+  - dopóki oczy są zamknięte, strażnicy idą o połowę wolniej i dwa razy szybciej porzucają poszukiwania,
+  - napięcie rośnie, gdy strażnik jest bliżej niż 12 m albo zaalarmowany: bije serce, punkty drżą i szybciej gasną. Zamknięcie oczu je rozładowuje, a po pauzie od 3 s obraz trzyma się dłużej,
+  - ekran końcowy podaje liczbę pauz (zamknięć od 2 s) i najdłuższą z nich.
+- **Strażnicy nie widzą, ale słyszą:** kroki (bieg z 10 m, chód z 6 m, skradanie z 3 m) oraz skan. Mur tłumi hałas. Idą w to miejsce, nasłuchują i wracają na trasę. Złapanie to dotknięcie.
 - Wzrok strażników (stożek przed twarzą i pogoń) jest w kodzie, ale wyłączony, bo gra była z nim za trudna: `Guard.Sight` w `Guard.cs`.
 - **Kamienie** leżą na podłodze (jasnoniebieskie). Podniesione można rzucać: przytrzymany lewy przycisk myszy kołysze siłę rzutu, łuk punktów pokazuje tor i miejsce upadku, puszczenie rzuca. Uderzenie odsłania okolicę jak mały skan (ok. 6 m, tyle co sekunda zamkniętych oczu), a strażnik idzie w to miejsce i dłużej tam nasłuchuje. Wartownik na posterunku schodzi z niego tylko za kamieniem.
 - **Kroki strażników** słyszane z bliska zostawiają na podłodze gasnące pomarańczowe ślady (czerwone, gdy strażnik jest zaalarmowany).

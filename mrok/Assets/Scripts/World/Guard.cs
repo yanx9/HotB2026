@@ -12,11 +12,15 @@ namespace Mrok.World
     {
         public enum State { Patrol, Investigate, Listen, Chase }
 
-        const float PatrolSpeed = 1.3f, AlertSpeed = 2.7f;
+        const float PatrolSpeed = 1.5f, AlertSpeed = 2.9f;
         const float StepLength = 0.8f;
         const float ListenSeconds = 3.5f, LoudListenSeconds = 7f;   // przy rzuconym kamieniu szuka dłużej
         const float SightRange = 10f, SightAngle = 55f;   // jest ciemno: widzi blisko i tylko przed sobą
         const float NoticeSeconds = 0.3f;                 // tyle musi patrzeć, zanim ruszy w pogoń
+
+        // Tempo świata: 1 zwykle, 0,5 gdy gracz ma zamknięte oczy. Strażnicy idą wtedy wolniej
+        // i szybciej kończą nasłuchiwanie, więc zamknięcie oczu jest chwilą wytchnienia.
+        public static float Pace = 1f;
 
         public static bool Sight = false;        // true: strażnicy widzą gracza przed sobą i go gonią
 
@@ -127,7 +131,7 @@ namespace Mrok.World
             if (state == State.Listen)
             {
                 // stoi i rozgląda się na boki
-                listenLeft -= dt;
+                listenLeft -= dt / Mathf.Max(Pace, 0.1f);
                 stride = Mathf.MoveTowards(stride, 0f, 3f * dt);
                 figure.Walk(phase, stride, 0f);
                 float look = Mathf.Sin((listenFor - listenLeft) * 1.9f);
@@ -159,7 +163,7 @@ namespace Mrok.World
 
             bool alert = Alerted;
             Vector3 before = transform.position;
-            transform.position = Vector3.MoveTowards(before, path[pathIndex], (alert ? AlertSpeed : PatrolSpeed) * dt);
+            transform.position = Vector3.MoveTowards(before, path[pathIndex], (alert ? AlertSpeed : PatrolSpeed) * Pace * dt);
             if (transform.position == path[pathIndex]) pathIndex++;
 
             Vector3 moved = transform.position - before;

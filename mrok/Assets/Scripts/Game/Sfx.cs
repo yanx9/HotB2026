@@ -93,6 +93,15 @@ namespace Mrok.Game
             });
         }
 
+        // jedno uderzenie serca: dwa głuche stuknięcia
+        public static AudioClip Heartbeat() =>
+            Make("Serce", 0.42f, 0.9f, t =>
+            {
+                float second = t - 0.15f;
+                return Sine(58f, t) * Mathf.Min(1f, t / 0.012f) * Mathf.Exp(-t * 30f)
+                     + (second > 0f ? 0.7f * Sine(50f, second) * Mathf.Min(1f, second / 0.012f) * Mathf.Exp(-second * 26f) : 0f);
+            });
+
         // drzwi nie puszczają: brakuje łupu
         public static AudioClip Deny() =>
             Make("Nie", 0.35f, 0.5f, t => (Sine(196f, t) + 0.5f * Sine(185f, t)) * Mathf.Min(1f, t * 60f) * Mathf.Exp(-t * 9f));

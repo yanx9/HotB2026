@@ -11,7 +11,14 @@ namespace Mrok.Game
 {
     // Skradanka w zupełnej ciemności. Gdy gracz zamyka oczy (sygnał "eyes"), gra liczy czas;
     // gdy je otwiera, skan odsłania stopklatkę otoczenia sięgającą tym dalej, im dłużej oczy
-    // były zamknięte. Im większy skan, tym dalej słyszą go strażnicy; gracza nie widzą.
+    // były zamknięte. Strażnicy gracza nie widzą, tylko słyszą.
+    //
+    // Otwarte oczy to presja, zamknięte to schronienie:
+    //  - skan po długim, spokojnym zamknięciu jest prawie niesłyszalny; pospieszny jest głośny,
+    //  - dopóki oczy są zamknięte, strażnicy zwalniają i szybciej porzucają poszukiwania,
+    //  - napięcie rośnie, gdy strażnik jest blisko albo zaalarmowany: bije serce, punkty drżą
+    //    i szybciej gasną; zamknięcie oczu je rozładowuje, a po długim obraz trzyma się dłużej,
+    //  - ekran końcowy podaje liczbę i długość pauz.
     //
     // W czasie gry na ekranie nie ma napisów: tekst pojawia się tylko na ekranie ładowania
     // i po zakończeniu poziomu, a wskazówki w świecie to napisy z punktów, które odsłania skan.
@@ -27,7 +34,11 @@ namespace Mrok.Game
         const float MinClosed = 0.5f;        // krótsze zamknięcie to mrugnięcie
         const float FullCharge = 6f;         // po tylu sekundach skan ma pełny zasięg
         const float MinRadius = 4f, MaxRadius = 28f;
-        const float ScanNoise = 0.55f;       // jaką część zasięgu skanu słychać
+        const float RushedNoise = 12f, CalmNoise = 2f;   // z jak daleka słychać skan: pospieszny i spokojny
+        const float QuietAfter = 3.5f;       // po tylu sekundach zamkniętych oczu skan jest najcichszy
+        const float PauseSeconds = 2f;       // zamknięcie co najmniej tak długie liczy się jako pauza
+        const float SerenePause = 3f;        // po takiej pauzie obraz trzyma się dłużej
+        const float PressureRange = 12f;     // bliżej niż tyle strażnik budzi napięcie
         const float WallMuffle = 0.55f;      // ściana na drodze skraca zasięg hałasu
         const float CatchDistance = 0.95f;
         const float RestartClosed = 1.5f;
@@ -66,6 +77,12 @@ namespace Mrok.Game
         float closedAt;
         int ticks;
 
+        float stress, serenity, beatAt;   // napięcie 0-1, spokój po długiej pauzie 0-1
+        int pauses;
+        float longestPause;
+        AudioSource heart;
+        AudioClip heartbeat;
+
         // Tryb sterowania oczami (F2). W obu trybach spacja to "prawda": gracz trzyma ją, gdy
         // ma zamknięte oczy, a gra wysyła znaczniki truth_closed / truth_open do nagrania EEG.
         // Tak samo F to prawda o zaciśniętej szczęce: truth_jaw_on / truth_jaw_off, a reakcję gry
@@ -73,6 +90,8 @@ namespace Mrok.Game
         //   KLAWISZ: grą steruje spacja; potok BCI tylko nagrywa (zbieranie danych do strojenia).
         //   EEG:     grą steruje sygnał eyes_closed_active; spacja niczego w grze nie zmienia.
         //            Bez danych z potoku spacja steruje jak dawniej, żeby dało się grać bez opaski.
+        static readonly int TrembleId = Shader.PropertyToID("_Tremble"), LifeScaleId = Shader.PropertyToID("_LifeScale");
+
         static bool keyboardMode;
         KeyboardSignalSource keyboardSource;
         float truthAt, sprintTruthAt, sprintAt;
@@ -130,6 +149,10 @@ namespace Mrok.Game
             pebbles.Clear();
             stones = 0;
             aiming = flying = false;
+            stress = serenity = 0f;
+            pauses = 0;
+            longestPause = 0f;
+            Guard.Pace = 1f;
             SignalHub.Clear();
 
             var config = SignalBindings.Load();
@@ -177,6 +200,11 @@ namespace Mrok.Game
             caught = Sfx.Caught();
             win = Sfx.Win();
             deny = Sfx.Deny();
+            heartbeat = Sfx.Heartbeat();
+            // serce ma własne źródło: pozostałe efekty zmieniają wysokość wspólnego
+            heart = new GameObject("Serce").AddComponent<AudioSource>();
+            heart.transform.SetParent(transform, false);
+            heart.playOnAwake = false;
             clack = Sfx.Clack();
 
             var playerGo = new GameObject("Gracz");
@@ -403,6 +431,7 @@ namespace Mrok.Game
             cloud.Tick();
             UpdateKeys();
             UpdateEyes();
+            UpdatePressure();
 
             if (phase == Phase.Loading && Time.time >= loadUntil)
             {
@@ -420,7 +449,7 @@ namespace Mrok.Game
                     if (Time.time >= pulseAt)
                     {
                         pulseAt = Time.time + HubPulse;
-                        Scan(HubRadius, 0.35f);
+                        Scan(HubRadius, 0.35f, 0f);
                     }
                     CheckPortals();
                 }
@@ -557,8 +586,16 @@ namespace Mrok.Game
                 }
                 else if (phase == Phase.Play && held >= MinClosed)
                 {
-                    Scan(ScanRadius(held), 1f);
+                    // im dłużej i spokojniej, tym ciszej: pospieszny skan słychać z daleka
+                    float calm = Mathf.Clamp01((held - MinClosed) / (QuietAfter - MinClosed));
+                    Scan(ScanRadius(held), Mathf.Lerp(1f, 0.45f, calm), Mathf.Lerp(RushedNoise, CalmNoise, calm));
                     pulseAt = Time.time + HubPulse;
+                    if (held >= PauseSeconds && !Level.Current.hub)
+                    {
+                        pauses++;
+                        longestPause = Mathf.Max(longestPause, held);
+                    }
+                    if (held >= SerenePause) serenity = 1f;
                 }
             }
             eyesClosed = closed;
@@ -567,14 +604,45 @@ namespace Mrok.Game
         // zasięg skanu po tylu sekundach zamkniętych oczu
         static float ScanRadius(float held) => Mathf.Lerp(MinRadius, MaxRadius, Mathf.Clamp01((held - MinClosed) / (FullCharge - MinClosed)));
 
-        void Scan(float radius, float volume)
+        // Napięcie i wytchnienie: tempo strażników, bicie serca, drżenie i trwałość obrazu.
+        void UpdatePressure()
+        {
+            float dt = Time.deltaTime;
+            bool playing = phase == Phase.Play && !Level.Current.hub;
+            Guard.Pace = Mathf.MoveTowards(Guard.Pace, playing && eyesClosed ? 0.5f : 1f, 2f * dt);
+
+            float target = 0f;
+            if (playing)
+            {
+                foreach (var guard in guards)
+                {
+                    float near = Mathf.Clamp01(1f - FlatDistance(guard.transform.position, player.transform.position) / PressureRange);
+                    target = Mathf.Max(target, guard.Alerted ? Mathf.Max(near, 0.35f) : near * 0.65f);
+                }
+            }
+            // zamknięte oczy rozładowują napięcie niezależnie od tego, co dzieje się wokół
+            if (eyesClosed || !playing) stress = Mathf.MoveTowards(stress, 0f, 0.45f * dt);
+            else stress = Mathf.MoveTowards(stress, target, (target > stress ? 0.3f : 0.12f) * dt);
+            serenity = Mathf.MoveTowards(serenity, 0f, dt / 25f);
+
+            Shader.SetGlobalFloat(TrembleId, stress * stress * 0.03f);
+            Shader.SetGlobalFloat(LifeScaleId, Mathf.Lerp(1f, 0.45f, stress) * (1f + 0.35f * serenity));
+
+            if (playing && stress > 0.12f && Time.time >= beatAt)
+            {
+                beatAt = Time.time + Mathf.Lerp(1.05f, 0.48f, stress);
+                heart.PlayOneShot(heartbeat, Mathf.Lerp(0.15f, 0.9f, stress));
+            }
+        }
+
+        void Scan(float radius, float volume, float noise)
         {
             LastRadius = radius;
             Physics.SyncTransforms();   // strażnicy ruszają się poza krokiem fizyki; skan ma trafić w ich obecną pozę
             cloud.Scan(player.EyePosition, radius, surfaces, Level.Signs);
             effects.pitch = Mathf.Lerp(1.3f, 0.75f, radius / MaxRadius);   // duży skan brzmi niżej i dłużej
             effects.PlayOneShot(ping, volume);
-            Noise(player.transform.position, radius * ScanNoise);
+            if (noise > 0f) Noise(player.transform.position, noise);
             MarkerSender.Send("scan", radius);
         }
 
@@ -761,7 +829,7 @@ namespace Mrok.Game
             foreach (var guard in guards)
             {
                 if (FlatDistance(guard.transform.position, player.transform.position) > CatchDistance) continue;
-                End(Phase.Caught, caught, "CAUGHT", "Close your eyes for a moment to try again.", "caught");
+                End(Phase.Caught, caught, "BREATHE", "Close your eyes for a moment to try again.", "caught");
                 return;
             }
         }
@@ -774,7 +842,10 @@ namespace Mrok.Game
             effects.pitch = 1f;
             effects.PlayOneShot(sound);
             title.text = Spaced(heading);
-            body.text = text;
+            // chwila refleksji: ile razy gracz się zatrzymał i na jak długo
+            body.text = text + "\n\n" + (pauses > 0
+                ? $"Pauses  {pauses}        Longest  {longestPause:0.0} s"
+                : "No pauses taken.");
             footer.text = "";
             curtainTarget = 0.82f;
             MarkerSender.Send(marker);

@@ -48,15 +48,19 @@ Shader "Mrok/PointCloud"
                 float _WaveSpeed;
             CBUFFER_END
 
-            float _Now;   // ustawiane globalnie przez grę
+            float _Now;         // ustawiane globalnie przez grę
+            float _Tremble;     // napięcie gracza: o ile metrów drżą punkty
+            float _LifeScale;   // napięcie skraca pamięć obrazu, spokój ją wydłuża (1 = bez zmian)
 
             Varyings Vert(Attributes v)
             {
                 Varyings o;
                 float age = _Now - v.scan.x - v.scan.y / _WaveSpeed;
-                float fade = saturate(1.0 - age / max(v.scan.z, 0.01));
+                float fade = saturate(1.0 - age / max(v.scan.z * (_LifeScale > 0.0 ? _LifeScale : 1.0), 0.01));
                 // każdy punkt migocze we własnym rytmie, żeby stopklatka nie była martwa
                 float seed = frac(sin(dot(v.positionOS.xyz, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+                // pod presją obraz drży: każdy punkt we własną stronę
+                v.positionOS.xyz += _Tremble * float3(sin(_Now * 17.0 + seed * 40.0), sin(_Now * 23.0 + seed * 71.0), sin(_Now * 19.0 + seed * 13.0));
                 float shimmer = 0.82 + 0.18 * sin(_Now * (1.5 + 2.0 * seed) + seed * 6.2832);
                 float brightness = fade * fade * shimmer + 2.5 * exp(-max(age, 0.0) * 5.0);
 

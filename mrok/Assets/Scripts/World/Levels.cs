@@ -101,7 +101,7 @@ namespace Mrok.World
             new LevelInfo
             {
                 title = "TUTORIAL",
-                intro = new[] { "It is completely dark.", "Close your eyes. Count to three. Open them." },
+                intro = new[] { "It is completely dark.", "Close your eyes. Count to three. Open them.", "The longer the pause, the more you see and the less they hear." },
                 map = new[]
                 {
                     "WWWWWWWWWWWWWWWWWWW",
@@ -136,7 +136,7 @@ namespace Mrok.World
                 posts = new[] { new Post(4, 11, 90f) },
                 signs = new[]
                 {
-                    new SignInfo("EYES SHUT\nLONGER = FARTHER", 3, 2, 'E', 3.4f),
+                    new SignInfo("EYES SHUT LONGER\nFARTHER AND QUIETER", 3, 2, 'E', 3.4f),
                     new SignInfo("TAKE THE GOLD", 9, 2, 'E', 3.4f),
                     new SignInfo("THEY HEAR YOU\nSHIFT = SNEAK", 14, 1, 'N', 3.3f),
                     new SignInfo("PICK UP THE STONES\nHOLD CLICK TO THROW", 15, 13, 'S', 3.2f),
@@ -148,7 +148,7 @@ namespace Mrok.World
             new LevelInfo
             {
                 title = "MUSEUM",
-                intro = new[] { "Three pieces. Four guards. One green door.", "They cannot see you. They hear your steps and your scans." },
+                intro = new[] { "Three pieces. Four guards. One green door.", "Hurry, and they hear you.", "Close your eyes, and the world slows down." },
                 map = new[]
                 {
                     "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
@@ -196,7 +196,7 @@ namespace Mrok.World
             new LevelInfo
             {
                 title = "GARDEN",
-                intro = new[] { "Open sky. Hedges, trees, a pavilion.", "Nobody can see you here. Everybody can hear you." },
+                intro = new[] { "Open sky. Hedges, trees, a pavilion.", "When it gets too close, close your eyes.", "The pressure fades while you pause." },
                 wallHeight = 3.2f,
                 map = new[]
                 {
